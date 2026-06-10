@@ -10,10 +10,11 @@ import { addHistoryEntry, computeStats } from './core/statsTracker.js';
 import { startHealthCheckLoop } from './monitor/rateLimitMonitor.js';
 import { StatusBarManager } from './ui/statusBar.js';
 import { AccountsTreeProvider } from './ui/accountsTreeProvider.js';
+import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
-import { listNamedSessions, loadSession } from './chat/sessionStore.js';
+import { listNamedSessions, loadSession, listSlashCommands } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -27,12 +28,16 @@ export function activate(context: vscode.ExtensionContext) {
     () => context.globalState.get<string>('keyRotator.preferredChatAccount')
   );
 
+  const sessionsProvider = new SessionsTreeProvider(() => listNamedSessions());
+
   vscode.window.registerTreeDataProvider('keyRotatorAccounts', treeProvider);
+  vscode.window.registerTreeDataProvider('keyRotatorChats', sessionsProvider);
   context.subscriptions.push(statusBar);
 
   const refreshUI = () => {
     statusBar.update(keyManager.getAllMeta());
     treeProvider.refresh();
+    sessionsProvider.refresh();
     DashboardPanel.refreshIfOpen();
   };
 
@@ -345,6 +350,14 @@ export function activate(context: vscode.ExtensionContext) {
     },
     listSessions: () => listNamedSessions(),
     loadHistory: (id: string) => loadSession(id),
+    getSlashCommands: () => listSlashCommands(),
+    listChatAccounts: () => {
+      const activeId = sortedActiveAnthropic()[0]?.id;
+      return keyManager
+        .getAllMeta()
+        .filter((a) => a.provider === CHAT_PROVIDER)
+        .map((a) => ({ id: a.id, label: a.label, active: a.id === activeId }));
+    },
   };
 
   const activeChatAccountLabel = (): string => {
@@ -361,6 +374,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('keyRotator.openChat', () => {
       ChatPanel.createOrShow(context.extensionUri, chatBackend, activeChatAccountLabel);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.openChatSession', (node?: { id?: string }) => {
+      ChatPanel.openSession(context.extensionUri, chatBackend, activeChatAccountLabel, node?.id ?? null);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.newChatSession', () => {
+      ChatPanel.openSession(context.extensionUri, chatBackend, activeChatAccountLabel, null);
     }),
 
     vscode.commands.registerCommand('keyRotator.setChatAccount', async (node?: { account?: AccountMeta }) => {

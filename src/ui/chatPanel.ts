@@ -10,8 +10,8 @@ interface IncomingMessage {
 }
 
 /**
- * Singleton WebView panel that hosts the failover-aware chat. The webview is
- * pure presentation; all process/rotation logic lives in ChatSession.
+ * Singleton WebView panel hosting the chat. Chat-only (sessions live in the
+ * activity-bar tree); all process/rotation logic lives in ChatSession.
  */
 export class ChatPanel {
   private static current: ChatPanel | undefined;
@@ -35,29 +35,54 @@ export class ChatPanel {
     this.panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg));
   }
 
-  static createOrShow(extensionUri: vscode.Uri, backend: ChatBackend, activeAccountLabel: () => string): void {
+  static createOrShow(extensionUri: vscode.Uri, backend: ChatBackend, activeAccountLabel: () => string): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal();
-      return;
+    } else {
+      ChatPanel.current = new ChatPanel(extensionUri, backend, activeAccountLabel);
     }
-    ChatPanel.current = new ChatPanel(extensionUri, backend, activeAccountLabel);
+    return ChatPanel.current;
   }
 
-  /** Re-push account/session state to the open panel (e.g. after a switch). */
+  /** Open the panel on a specific session (or a new one when id is null). */
+  static openSession(
+    extensionUri: vscode.Uri,
+    backend: ChatBackend,
+    activeAccountLabel: () => string,
+    id: string | null
+  ): void {
+    const panel = ChatPanel.createOrShow(extensionUri, backend, activeAccountLabel);
+    if (id) panel.loadSession(id);
+    else panel.startNewSession();
+  }
+
+  /** Re-push account state to the open panel (e.g. after switching account). */
   static refreshIfOpen(): void {
     const c = ChatPanel.current;
     if (!c) return;
     c.post({ type: 'meta', activeAccount: c.activeAccountLabel(), sessionId: c.session.currentSessionId });
-    c.postSessions();
   }
 
   private post(msg: Record<string, unknown>): void {
     void this.panel.webview.postMessage(msg);
   }
 
-  private postSessions(): void {
-    const sessions = this.backend.listSessions().map((s) => ({ id: s.id, name: s.name, mtime: s.mtime }));
-    this.post({ type: 'sessions', sessions, activeId: this.session.currentSessionId });
+  private loadSession(id: string): void {
+    if (this.session.isBusy()) return;
+    const loaded = this.backend.loadHistory(id);
+    const name = this.backend.listSessions().find((s) => s.id === id)?.name ?? 'Conversación';
+    this.session.setActiveSession(id, loaded?.cwd ?? null);
+    this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: id });
+    this.post({ type: 'title', title: name });
+    this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: id });
+  }
+
+  private startNewSession(): void {
+    if (this.session.isBusy()) return;
+    this.session.reset();
+    this.post({ type: 'history', messages: [], activeId: null });
+    this.post({ type: 'title', title: 'Nueva conversación' });
+    this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: null });
   }
 
   private async handleMessage(msg: IncomingMessage): Promise<void> {
@@ -70,7 +95,8 @@ export class ChatPanel {
         this.session.setEffort(effort || null);
         this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
         this.post({ type: 'config', model, effort });
-        this.postSessions();
+        this.post({ type: 'accounts', accounts: this.backend.listChatAccounts() });
+        this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
         break;
       }
 
@@ -88,25 +114,36 @@ export class ChatPanel {
         break;
       }
 
-      case 'refreshSessions':
-        this.postSessions();
+      case 'selectSession':
+        if (msg.id) this.loadSession(msg.id);
         break;
 
-      case 'selectSession': {
-        if (!msg.id || this.session.isBusy()) return;
-        const loaded = this.backend.loadHistory(msg.id);
-        this.session.setActiveSession(msg.id, loaded?.cwd ?? null);
-        this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: msg.id });
-        this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: msg.id });
+      case 'newSession':
+        this.startNewSession();
+        break;
+
+      // ----- account menu -----
+      case 'switchAccount':
+        if (msg.id) {
+          await vscode.commands.executeCommand('keyRotator.setChatAccount', { account: { id: msg.id } });
+          this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
+          this.post({ type: 'accounts', accounts: this.backend.listChatAccounts() });
+        }
+        break;
+      case 'addAccount':
+        await vscode.commands.executeCommand('keyRotator.addAccount');
+        break;
+      case 'openDashboard':
+        await vscode.commands.executeCommand('keyRotator.openDashboard');
+        break;
+
+      // ----- attach a file (the "+" menu) -----
+      case 'attachFile': {
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Adjuntar' });
+        if (picked && picked[0]) this.post({ type: 'insert', text: `@${picked[0].fsPath} ` });
         break;
       }
 
-      case 'newSession':
-        if (this.session.isBusy()) return;
-        this.session.reset();
-        this.post({ type: 'history', messages: [], activeId: null });
-        this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: null });
-        break;
       case 'send': {
         const text = (msg.text ?? '').trim();
         if (!text) return;
@@ -119,12 +156,7 @@ export class ChatPanel {
           onInfo: (t) => this.post({ type: 'info', text: t }),
           onModel: (m) => this.post({ type: 'model', model: m }),
           onError: (t) => this.post({ type: 'turnError', text: t }),
-          onDone: (full) => {
-            this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId });
-            // A new session may have just been created/updated in the shared
-            // store; refresh the sidebar so it reflects the latest state.
-            this.postSessions();
-          },
+          onDone: (full) => this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId }),
         });
         break;
       }

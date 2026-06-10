@@ -22,10 +22,33 @@ export interface ChatMessage {
   text: string;
 }
 
+/** The default Claude config home (`~/.claude` or $CLAUDE_CONFIG_DIR). */
+export function defaultHome(): string {
+  return process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), '.claude');
+}
+
 /** Root of the shared session store (default Claude config home). */
 export function defaultProjectsRoot(): string {
-  const home = process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), '.claude');
-  return path.join(home, 'projects');
+  return path.join(defaultHome(), 'projects');
+}
+
+/**
+ * List the user's slash commands for the `/` autocomplete by reading the local
+ * skills directory — zero tokens, instant. These are exactly the skills the
+ * native Claude Code exposes as `/name`.
+ */
+export function listSlashCommands(home = defaultHome()): string[] {
+  const names = new Set<string>();
+  try {
+    for (const e of fs.readdirSync(path.join(home, 'skills'), { withFileTypes: true })) {
+      if (e.isDirectory()) names.add(e.name);
+    }
+  } catch {
+    /* no skills dir */
+  }
+  // A few common built-in commands so they autocomplete too.
+  for (const b of ['init', 'review', 'security-review', 'compact', 'clear', 'help']) names.add(b);
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 /** Extract the user-set custom title from transcript lines, if any. */

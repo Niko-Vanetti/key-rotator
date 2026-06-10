@@ -7,68 +7,71 @@
   <title>KeyRotator Chat</title>
 </head>
 <body>
-  <div class="layout">
-    <!-- Sessions sidebar (shares the same store as native Claude Code) -->
-    <aside class="sidebar">
-      <div class="sidebar-head">
-        <span class="brand">KEYROTATOR</span>
+  <section class="chat">
+    <header class="chat-header">
+      <div class="title">
+        <span class="dot"></span>
+        <span id="chatTitle">Nueva conversación</span>
       </div>
-      <button id="newSessionBtn" class="new-session">＋ New session</button>
-      <div class="search">
-        <input id="searchInput" placeholder="Search sessions…" />
+      <!-- Account menu (switch API / Add Account / Open Dashboard) -->
+      <div class="acct-wrap">
+        <button id="acctBtn" class="acct-btn"><span id="activeAccount">—</span> ▾</button>
+        <div id="acctMenu" class="menu hidden">
+          <div class="menu-label">Cuenta del chat</div>
+          <div id="acctList"></div>
+          <div class="menu-sep"></div>
+          <button class="menu-item" data-act="addAccount">＋ Add Account</button>
+          <button class="menu-item" data-act="openDashboard">▦ Open Dashboard</button>
+        </div>
       </div>
-      <div id="sessionList" class="session-list"></div>
-    </aside>
+    </header>
 
-    <!-- Chat area -->
-    <section class="chat">
-      <header class="chat-header">
-        <div class="title">
-          <span class="dot"></span>
-          <span id="chatTitle">Nueva conversación</span>
-        </div>
-        <div class="controls">
-          <label class="ctl">
-            <span>Modelo</span>
-            <select id="modelSelect">
-              <option value="">Default</option>
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
-              <option value="claude-opus-4-8">Opus 4.8</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-              <option value="claude-haiku-4-5">Haiku 4.5</option>
-            </select>
-          </label>
-          <label class="ctl">
-            <span>Esfuerzo</span>
-            <select id="effortSelect">
-              <option value="">Default</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-              <option value="max">max</option>
-            </select>
-          </label>
-          <span id="activeModel" class="model-badge" title="Modelo en uso reportado por Claude">—</span>
-          <span id="activeAccount" class="badge">—</span>
-        </div>
-      </header>
+    <main id="messages" class="messages">
+      <div class="welcome">
+        <h3>Chat</h3>
+        <p>Elige un chat en la barra lateral (KeyRotator) o escribe abajo para empezar uno nuevo. Escribe <b>/</b> para tus comandos y skills.</p>
+      </div>
+    </main>
 
-      <main id="messages" class="messages">
-        <div class="welcome">
-          <h3>Chat con tus sesiones de Claude</h3>
-          <p>Elige una sesión de la izquierda para continuarla con tu API, o crea una nueva. Comparte los mismos chats que Claude Code: lo que sigas aquí lo ves allá, y viceversa.</p>
-        </div>
-      </main>
-
+    <!-- Composer with slash autocomplete -->
+    <div class="composer-wrap">
+      <div id="slashMenu" class="slash-menu hidden"></div>
       <footer class="composer">
-        <textarea id="input" placeholder="Escribe un mensaje…  (Enter envía, Shift+Enter salto de línea)" rows="1"></textarea>
+        <button id="plusBtn" class="plus-btn" title="Adjuntar / funciones">＋</button>
+        <div id="plusMenu" class="menu up hidden">
+          <button class="menu-item" data-act="attachFile">⤓ Adjuntar archivo</button>
+        </div>
+        <textarea id="input" placeholder="Escribe un mensaje…  ( / para comandos · Enter envía )" rows="1"></textarea>
         <button id="sendBtn" title="Enviar">Enviar</button>
       </footer>
-    </section>
-  </div>
+      <!-- Bottom controls (like native: model + effort + active model) -->
+      <div class="bottom-bar">
+        <label class="ctl">
+          <span>Modelo</span>
+          <select id="modelSelect">
+            <option value="">Default</option>
+            <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+            <option value="claude-fable-5">Fable 5</option>
+            <option value="claude-opus-4-8">Opus 4.8</option>
+            <option value="claude-haiku-4-5">Haiku 4.5</option>
+          </select>
+        </label>
+        <label class="ctl">
+          <span>Esfuerzo</span>
+          <select id="effortSelect">
+            <option value="">Default</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
+        </label>
+        <span class="spacer"></span>
+        <span id="activeModel" class="model-badge" title="Modelo en uso (reportado por Claude)">—</span>
+      </div>
+    </div>
+  </section>
 
   <script src="{{scriptUri}}"></script>
 </body>

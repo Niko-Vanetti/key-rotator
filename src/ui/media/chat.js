@@ -1,144 +1,143 @@
 (function () {
   const vscode = acquireVsCodeApi();
 
-  const messagesEl = document.getElementById('messages');
-  const inputEl = document.getElementById('input');
-  const sendBtn = document.getElementById('sendBtn');
-  const newSessionBtn = document.getElementById('newSessionBtn');
-  const activeAccountEl = document.getElementById('activeAccount');
-  const activeModelEl = document.getElementById('activeModel');
-  const chatTitleEl = document.getElementById('chatTitle');
-  const sessionListEl = document.getElementById('sessionList');
-  const searchInput = document.getElementById('searchInput');
-  const modelSelect = document.getElementById('modelSelect');
-  const effortSelect = document.getElementById('effortSelect');
+  const $ = (id) => document.getElementById(id);
+  const messagesEl = $('messages');
+  const inputEl = $('input');
+  const sendBtn = $('sendBtn');
+  const activeAccountEl = $('activeAccount');
+  const activeModelEl = $('activeModel');
+  const chatTitleEl = $('chatTitle');
+  const modelSelect = $('modelSelect');
+  const effortSelect = $('effortSelect');
+  const acctBtn = $('acctBtn');
+  const acctMenu = $('acctMenu');
+  const acctList = $('acctList');
+  const plusBtn = $('plusBtn');
+  const plusMenu = $('plusMenu');
+  const slashMenu = $('slashMenu');
 
-  let streamingEl = null;
-  let streamingRaw = '';
-  let sending = false;
-  let sessions = [];
-  let activeId = null;
-  let filter = '';
+  let streamingEl = null, streamingRaw = '', sending = false, activeId = null;
+  let slashCommands = [], slashItems = [], slashSel = -1;
 
-  // ---------- minimal markdown (CSP-safe, no external libs) ----------
-  function escapeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
+  // ---------- markdown (CSP-safe) ----------
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   function inline(s) {
-    return s
-      .replace(/`([^`]+)`/g, (_, c) => '<code>' + escapeHtml(c) + '</code>')
+    return s.replace(/`([^`]+)`/g, (_, c) => '<code>' + esc(c) + '</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
   }
   function renderMarkdown(src) {
-    const lines = src.split('\n');
-    let html = '';
-    let inCode = false, code = '', inUl = false, inOl = false;
+    const lines = src.split('\n'); let html = '', inCode = false, code = '', inUl = false, inOl = false;
     const closeLists = () => { if (inUl) { html += '</ul>'; inUl = false; } if (inOl) { html += '</ol>'; inOl = false; } };
     for (const raw of lines) {
       if (raw.trimStart().startsWith('```')) {
-        if (inCode) { html += '<pre><code>' + escapeHtml(code) + '</code></pre>'; code = ''; inCode = false; }
-        else { closeLists(); inCode = true; }
-        continue;
+        if (inCode) { html += '<pre><code>' + esc(code) + '</code></pre>'; code = ''; inCode = false; }
+        else { closeLists(); inCode = true; } continue;
       }
       if (inCode) { code += raw + '\n'; continue; }
       const h = raw.match(/^(#{1,4})\s+(.*)$/);
-      if (h) { closeLists(); html += '<h' + (h[1].length + 2) + '>' + inline(escapeHtml(h[2])) + '</h' + (h[1].length + 2) + '>'; continue; }
+      if (h) { closeLists(); const n = h[1].length + 2; html += '<h' + n + '>' + inline(esc(h[2])) + '</h' + n + '>'; continue; }
       const ul = raw.match(/^\s*[-*]\s+(.*)$/);
-      if (ul) { if (!inUl) { closeLists(); html += '<ul>'; inUl = true; } html += '<li>' + inline(escapeHtml(ul[1])) + '</li>'; continue; }
+      if (ul) { if (!inUl) { closeLists(); html += '<ul>'; inUl = true; } html += '<li>' + inline(esc(ul[1])) + '</li>'; continue; }
       const ol = raw.match(/^\s*\d+\.\s+(.*)$/);
-      if (ol) { if (!inOl) { closeLists(); html += '<ol>'; inOl = true; } html += '<li>' + inline(escapeHtml(ol[1])) + '</li>'; continue; }
+      if (ol) { if (!inOl) { closeLists(); html += '<ol>'; inOl = true; } html += '<li>' + inline(esc(ol[1])) + '</li>'; continue; }
       if (raw.trim() === '') { closeLists(); continue; }
-      closeLists();
-      html += '<p>' + inline(escapeHtml(raw)) + '</p>';
+      closeLists(); html += '<p>' + inline(esc(raw)) + '</p>';
     }
-    if (inCode) html += '<pre><code>' + escapeHtml(code) + '</code></pre>';
-    closeLists();
-    return html;
+    if (inCode) html += '<pre><code>' + esc(code) + '</code></pre>'; closeLists(); return html;
   }
 
   // ---------- helpers ----------
-  function relTime(ms) {
-    const s = Math.max(1, Math.floor((Date.now() - ms) / 1000));
-    if (s < 60) return s + 's';
-    const m = Math.floor(s / 60); if (m < 60) return m + 'm';
-    const h = Math.floor(m / 60); if (h < 24) return h + 'h';
-    return Math.floor(h / 24) + 'd';
-  }
-  function clearWelcome() { const w = messagesEl.querySelector('.welcome'); if (w) w.remove(); }
-  function scrollToBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
-
+  const clearWelcome = () => { const w = messagesEl.querySelector('.welcome'); if (w) w.remove(); };
+  const scrollToBottom = () => { messagesEl.scrollTop = messagesEl.scrollHeight; };
   function addMessage(role, text, asMarkdown) {
     clearWelcome();
-    const row = document.createElement('div');
-    row.className = 'msg ' + role;
-    const who = document.createElement('div');
-    who.className = 'who';
-    who.textContent = role === 'user' ? 'Tú' : 'Claude';
-    const body = document.createElement('div');
-    body.className = 'body';
-    if (asMarkdown) body.innerHTML = renderMarkdown(text || '');
-    else body.textContent = text || '';
-    row.appendChild(who);
-    row.appendChild(body);
-    messagesEl.appendChild(row);
-    scrollToBottom();
-    return body;
+    const row = document.createElement('div'); row.className = 'msg ' + role;
+    const who = document.createElement('div'); who.className = 'who'; who.textContent = role === 'user' ? 'Tú' : 'Claude';
+    const body = document.createElement('div'); body.className = 'body';
+    if (asMarkdown) body.innerHTML = renderMarkdown(text || ''); else body.textContent = text || '';
+    row.appendChild(who); row.appendChild(body); messagesEl.appendChild(row); scrollToBottom(); return body;
   }
   function addNotice(kind, text) {
-    clearWelcome();
-    const el = document.createElement('div');
-    el.className = 'notice ' + kind;
-    el.textContent = text;
-    messagesEl.appendChild(el);
-    scrollToBottom();
+    clearWelcome(); const el = document.createElement('div'); el.className = 'notice ' + kind; el.textContent = text;
+    messagesEl.appendChild(el); scrollToBottom();
   }
-  function setSending(state) {
-    sending = state;
-    sendBtn.disabled = state;
-    inputEl.disabled = state;
-    if (!state) inputEl.focus();
-  }
+  function setSending(s) { sending = s; sendBtn.disabled = s; inputEl.disabled = s; if (!s) inputEl.focus(); }
   function finalizeStreaming() {
     if (streamingEl) {
       streamingEl.parentElement.classList.remove('streaming');
-      if (streamingRaw) streamingEl.innerHTML = renderMarkdown(streamingRaw);
-      else streamingEl.parentElement.remove();
-      streamingEl = null;
-      streamingRaw = '';
+      if (streamingRaw) streamingEl.innerHTML = renderMarkdown(streamingRaw); else streamingEl.parentElement.remove();
+      streamingEl = null; streamingRaw = '';
     }
   }
-  function autoGrow() {
-    inputEl.style.height = 'auto';
-    inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+  function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px'; }
+
+  // ---------- menus ----------
+  function closeMenus() { acctMenu.classList.add('hidden'); plusMenu.classList.add('hidden'); }
+  document.addEventListener('click', (e) => {
+    if (!acctMenu.contains(e.target) && e.target !== acctBtn) acctMenu.classList.add('hidden');
+    if (!plusMenu.contains(e.target) && e.target !== plusBtn) plusMenu.classList.add('hidden');
+  });
+  acctBtn.addEventListener('click', (e) => { e.stopPropagation(); plusMenu.classList.add('hidden'); acctMenu.classList.toggle('hidden'); });
+  plusBtn.addEventListener('click', (e) => { e.stopPropagation(); acctMenu.classList.add('hidden'); plusMenu.classList.toggle('hidden'); });
+  acctMenu.addEventListener('click', (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute('data-act');
+    if (act) { vscode.postMessage({ type: act }); closeMenus(); }
+  });
+  plusMenu.addEventListener('click', (e) => {
+    const act = e.target.getAttribute && e.target.getAttribute('data-act');
+    if (act) { vscode.postMessage({ type: act }); closeMenus(); }
+  });
+  function renderAccounts(accounts) {
+    acctList.innerHTML = '';
+    (accounts || []).forEach((a) => {
+      const b = document.createElement('button');
+      b.className = 'menu-item' + (a.active ? ' active' : '');
+      b.textContent = (a.active ? '● ' : '○ ') + a.label;
+      b.addEventListener('click', () => { vscode.postMessage({ type: 'switchAccount', id: a.id }); closeMenus(); });
+      acctList.appendChild(b);
+    });
   }
 
-  // ---------- session sidebar ----------
-  function renderSessions() {
-    sessionListEl.innerHTML = '';
-    const list = sessions.filter((s) => s.name.toLowerCase().includes(filter));
-    if (list.length === 0) {
-      const e = document.createElement('div');
-      e.className = 'session-empty';
-      e.textContent = sessions.length === 0 ? 'Sin sesiones con nombre todavía.' : 'Sin coincidencias.';
-      sessionListEl.appendChild(e);
-      return;
-    }
-    for (const s of list) {
-      const item = document.createElement('div');
-      item.className = 'session-item' + (s.id === activeId ? ' active' : '');
-      const name = document.createElement('span');
-      name.className = 'name'; name.textContent = s.name;
-      const ago = document.createElement('span');
-      ago.className = 'ago'; ago.textContent = relTime(s.mtime);
-      item.appendChild(name); item.appendChild(ago);
-      item.addEventListener('click', () => { if (!sending) vscode.postMessage({ type: 'selectSession', id: s.id }); });
-      sessionListEl.appendChild(item);
-    }
+  // ---------- slash autocomplete ----------
+  function currentSlashQuery() {
+    const v = inputEl.value;
+    const m = v.match(/^\/(\S*)$/); // single token at start, like native
+    return m ? m[1] : null;
   }
-  function setActiveTitle() {
-    const s = sessions.find((x) => x.id === activeId);
-    chatTitleEl.textContent = s ? s.name : 'Nueva conversación';
+  function updateSlash() {
+    const q = currentSlashQuery();
+    if (q === null || slashCommands.length === 0) { slashMenu.classList.add('hidden'); slashSel = -1; return; }
+    const ql = q.toLowerCase();
+    slashItems = slashCommands.filter((c) => c.toLowerCase().includes(ql)).slice(0, 50);
+    if (slashItems.length === 0) { slashMenu.classList.add('hidden'); slashSel = -1; return; }
+    slashSel = 0;
+    slashMenu.innerHTML = '';
+    slashItems.forEach((c, i) => {
+      const it = document.createElement('div');
+      it.className = 'slash-item' + (i === 0 ? ' sel' : '');
+      const cmd = document.createElement('span'); cmd.className = 'cmd'; cmd.textContent = c;
+      it.appendChild(cmd);
+      it.addEventListener('mousedown', (e) => { e.preventDefault(); acceptSlash(i); });
+      slashMenu.appendChild(it);
+    });
+    slashMenu.classList.remove('hidden');
+  }
+  function moveSlash(d) {
+    if (slashMenu.classList.contains('hidden')) return;
+    const items = slashMenu.querySelectorAll('.slash-item');
+    if (!items.length) return;
+    items[slashSel] && items[slashSel].classList.remove('sel');
+    slashSel = (slashSel + d + items.length) % items.length;
+    items[slashSel].classList.add('sel');
+    items[slashSel].scrollIntoView({ block: 'nearest' });
+  }
+  function acceptSlash(i) {
+    const idx = i != null ? i : slashSel;
+    if (idx < 0 || idx >= slashItems.length) return;
+    inputEl.value = '/' + slashItems[idx] + ' ';
+    slashMenu.classList.add('hidden'); slashSel = -1; inputEl.focus(); autoGrow();
   }
 
   // ---------- chat ----------
@@ -147,22 +146,23 @@
     const text = inputEl.value.trim();
     if (!text) return;
     addMessage('user', text, false);
-    inputEl.value = ''; autoGrow();
-    setSending(true);
-    streamingRaw = '';
+    inputEl.value = ''; autoGrow(); slashMenu.classList.add('hidden');
+    setSending(true); streamingRaw = '';
     streamingEl = addMessage('assistant', '', false);
     streamingEl.parentElement.classList.add('streaming');
     vscode.postMessage({ type: 'send', text });
   }
 
   // ---------- events ----------
-  inputEl.addEventListener('input', autoGrow);
+  inputEl.addEventListener('input', () => { autoGrow(); updateSlash(); });
   inputEl.addEventListener('keydown', (e) => {
+    const slashOpen = !slashMenu.classList.contains('hidden');
+    if (slashOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); moveSlash(e.key === 'ArrowDown' ? 1 : -1); return; }
+    if (slashOpen && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey))) { e.preventDefault(); acceptSlash(); return; }
+    if (slashOpen && e.key === 'Escape') { slashMenu.classList.add('hidden'); slashSel = -1; return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
   sendBtn.addEventListener('click', send);
-  newSessionBtn.addEventListener('click', () => vscode.postMessage({ type: 'newSession' }));
-  searchInput.addEventListener('input', () => { filter = searchInput.value.trim().toLowerCase(); renderSessions(); });
   modelSelect.addEventListener('change', () => vscode.postMessage({ type: 'setModel', value: modelSelect.value }));
   effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));
 
@@ -173,49 +173,30 @@
         if (typeof msg.model === 'string') modelSelect.value = [...modelSelect.options].some((o) => o.value === msg.model) ? msg.model : '';
         if (typeof msg.effort === 'string') effortSelect.value = msg.effort;
         break;
-      case 'sessions':
-        sessions = msg.sessions || [];
-        activeId = msg.activeId ?? activeId;
-        renderSessions(); setActiveTitle();
-        break;
+      case 'accounts': renderAccounts(msg.accounts); break;
+      case 'slash': slashCommands = msg.commands || []; break;
       case 'history':
         activeId = msg.activeId ?? null;
         messagesEl.innerHTML = ''; streamingEl = null; streamingRaw = '';
-        if (!msg.messages || msg.messages.length === 0) {
-          if (!activeId) addNotice('info', 'Nueva conversación. Escribe para empezar.');
-        } else {
-          for (const m of msg.messages) addMessage(m.role, m.text, m.role === 'assistant');
-        }
-        renderSessions(); setActiveTitle(); setSending(false);
+        if (!msg.messages || msg.messages.length === 0) { if (!activeId) addNotice('info', 'Nueva conversación. Escribe para empezar.'); }
+        else { for (const m of msg.messages) addMessage(m.role, m.text, m.role === 'assistant'); }
+        setSending(false);
         break;
       case 'meta':
         activeAccountEl.textContent = msg.activeAccount || '—';
         break;
-      case 'model':
-        if (msg.model) activeModelEl.textContent = msg.model;
-        break;
-      case 'delta':
-        if (streamingEl) { streamingRaw += msg.text; streamingEl.textContent = streamingRaw; scrollToBottom(); }
-        break;
+      case 'title': chatTitleEl.textContent = msg.title || 'Nueva conversación'; break;
+      case 'model': if (msg.model) activeModelEl.textContent = msg.model; break;
+      case 'insert': inputEl.value += (msg.text || ''); autoGrow(); inputEl.focus(); break;
+      case 'delta': if (streamingEl) { streamingRaw += msg.text; streamingEl.textContent = streamingRaw; scrollToBottom(); } break;
       case 'switch':
         if (streamingEl) { streamingEl.parentElement.remove(); streamingEl = null; streamingRaw = ''; }
         addNotice('switch', '↻ Cambiando a ' + msg.label + ' (' + msg.reason + ') — continúo…');
-        streamingRaw = '';
-        streamingEl = addMessage('assistant', '', false);
-        streamingEl.parentElement.classList.add('streaming');
+        streamingRaw = ''; streamingEl = addMessage('assistant', '', false); streamingEl.parentElement.classList.add('streaming');
         break;
-      case 'info':
-        addNotice('info', msg.text);
-        break;
-      case 'turnError':
-        finalizeStreaming();
-        addNotice('error', '⚠ ' + msg.text);
-        setSending(false);
-        break;
-      case 'done':
-        finalizeStreaming();
-        setSending(false);
-        break;
+      case 'info': addNotice('info', msg.text); break;
+      case 'turnError': finalizeStreaming(); addNotice('error', '⚠ ' + msg.text); setSending(false); break;
+      case 'done': finalizeStreaming(); setSending(false); break;
     }
   });
 

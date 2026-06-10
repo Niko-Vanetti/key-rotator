@@ -51,6 +51,10 @@ export interface ChatBackend {
   listSessions(): SessionSummary[];
   /** Load one session's cwd + message thread for display. */
   loadHistory(id: string): { cwd: string; messages: ChatMessage[] } | null;
+  /** Slash commands (skills) for the `/` autocomplete — read from disk, free. */
+  getSlashCommands(): string[];
+  /** Accounts available for the chat (for the account menu). */
+  listChatAccounts(): { id: string; label: string; active: boolean }[];
 }
 
 /** UI-facing callbacks for a single in-flight turn. */

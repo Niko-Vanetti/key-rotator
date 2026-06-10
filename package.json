@@ -18,6 +18,7 @@
     },
     "views": {
       "keyRotator": [
+        { "id": "keyRotatorChats", "name": "Chats" },
         { "id": "keyRotatorAccounts", "name": "Accounts" }
       ]
     },
@@ -29,6 +30,8 @@
       { "command": "keyRotator.disableAccount", "title": "KeyRotator: Disable Account", "icon": "$(circle-slash)" },
       { "command": "keyRotator.openDashboard", "title": "KeyRotator: Open Dashboard", "icon": "$(dashboard)" },
       { "command": "keyRotator.openChat", "title": "KeyRotator: Open Chat", "icon": "$(comment-discussion)" },
+      { "command": "keyRotator.openChatSession", "title": "KeyRotator: Open Chat Session" },
+      { "command": "keyRotator.newChatSession", "title": "KeyRotator: New Chat Session", "icon": "$(add)" },
       { "command": "keyRotator.loginProfile", "title": "KeyRotator: Log in Account (Chat)", "icon": "$(sign-in)" },
       { "command": "keyRotator.setChatAccount", "title": "KeyRotator: Use this Account in Chat" },
       { "command": "keyRotator.reportRateLimit", "title": "KeyRotator: Report Rate Limit on Active Account" },
@@ -36,7 +39,8 @@
     ],
     "menus": {
       "view/title": [
-        { "command": "keyRotator.openChat", "when": "view == keyRotatorAccounts", "group": "navigation@0" },
+        { "command": "keyRotator.newChatSession", "when": "view == keyRotatorChats", "group": "navigation@0" },
+        { "command": "keyRotator.openChat", "when": "view == keyRotatorChats", "group": "navigation@1" },
         { "command": "keyRotator.addAccount", "when": "view == keyRotatorAccounts", "group": "navigation@1" },
         { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation@2" }
       ],

@@ -156,6 +156,9 @@ try {
 const expectedCommands = [
   'keyRotator.openDashboard',
   'keyRotator.openChat',
+  'keyRotator.openChatSession',
+  'keyRotator.newChatSession',
+  'keyRotator.setChatAccount',
   'keyRotator.loginProfile',
   'keyRotator.addAccount',
   'keyRotator.activateAccount',
