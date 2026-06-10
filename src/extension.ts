@@ -185,33 +185,59 @@ export function activate(context: vscode.ExtensionContext) {
 
   // --- chat backend ------------------------------------------------------
 
-  const getChatMode = (): 'full' | 'failover' =>
-    vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'failover') === 'full'
-      ? 'full'
-      : 'failover';
+  type ChatMode = 'failover' | 'full' | 'profiles';
+  const getChatMode = (): ChatMode => {
+    const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'profiles');
+    return m === 'failover' || m === 'full' ? m : 'profiles';
+  };
 
-  /** Resolve the account/credential the next turn should use. */
-  async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
-    // Full mode: use the logged-in Claude (OAuth/subscription) with full
-    // MCPs/skills — no API key, no per-account rotation.
-    if (getChatMode() === 'full') {
-      return { id: 'login', label: 'Claude (tu login)', useLogin: true };
+  /** Per-account CLAUDE_CONFIG_DIR (its own OAuth login) for `profiles` mode. */
+  const profileDir = (accountId: string): string => {
+    const dir = vscode.Uri.joinPath(context.globalStorageUri, 'profiles', accountId).fsPath;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // best-effort
     }
-    const candidates = keyManager
+    return dir;
+  };
+
+  const sortedActiveAnthropic = (): AccountMeta[] =>
+    keyManager
       .getAllMeta()
       .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
       .sort((a, b) => a.priority - b.priority);
-    const meta = candidates[0];
+
+  /** Resolve the account/credential the next turn should use. */
+  async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
+    const mode = getChatMode();
+
+    // Full mode: the user's default logged-in Claude — managed MCPs, single
+    // account, no rotation.
+    if (mode === 'full') {
+      return { id: 'login', label: 'Claude (tu login)', useLogin: true };
+    }
+
+    const meta = sortedActiveAnthropic()[0];
     if (!meta) return null;
+
+    // Profiles mode: per-account OAuth login dir → managed MCPs + rotation.
+    if (mode === 'profiles') {
+      return { id: meta.id, label: meta.label, configDir: profileDir(meta.id) };
+    }
+
+    // Failover mode: API key billing.
     const apiKey = await keyManager.getApiKey(meta.id);
     if (!apiKey) return null;
     return { id: meta.id, label: meta.label, apiKey };
   }
 
-  /** Mark `accountId` rate-limited, rotate, and return the next account+key. */
+  /** Mark `accountId` rate-limited, rotate, and return the next account. */
   async function rotateChatFrom(accountId: string): Promise<ActiveAccount | null> {
-    // No cross-account rotation in full (login) mode — OAuth can't hot-swap.
-    if (getChatMode() === 'full') return null;
+    const mode = getChatMode();
+    // No cross-account rotation in full (single-login) mode.
+    if (mode === 'full') return null;
+
     const accounts = keyManager.getAllMeta();
     const from = accounts.find((a) => a.id === accountId);
     await keyManager.updateAccountMeta(accountId, { status: 'rate-limited' });
@@ -222,24 +248,33 @@ export function activate(context: vscode.ExtensionContext) {
       return null;
     }
 
+    const logSwitch = async () =>
+      setHistory(
+        addHistoryEntry(getHistory(), {
+          timestamp: Date.now(),
+          fromAccountId: accountId,
+          fromLabel: from?.label ?? null,
+          toAccountId: next.id,
+          toLabel: next.label,
+          provider: CHAT_PROVIDER,
+          reason: 'rate-limit',
+        })
+      );
+
+    if (mode === 'profiles') {
+      await logSwitch();
+      refreshUI();
+      return { id: next.id, label: next.label, configDir: profileDir(next.id) };
+    }
+
+    // Failover (API key) mode.
     const full = await keyManager.getAccountWithKey(next.id);
     if (!full) {
       refreshUI();
       return null;
     }
-
     await applyEnvVar(full);
-    await setHistory(
-      addHistoryEntry(getHistory(), {
-        timestamp: Date.now(),
-        fromAccountId: accountId,
-        fromLabel: from?.label ?? null,
-        toAccountId: next.id,
-        toLabel: next.label,
-        provider: CHAT_PROVIDER,
-        reason: 'rate-limit',
-      })
-    );
+    await logSwitch();
     refreshUI();
     return { id: next.id, label: next.label, apiKey: full.apiKey };
   }
@@ -292,11 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const activeChatAccountLabel = (): string => {
     if (getChatMode() === 'full') return 'Claude (tu login)';
-    const candidates = keyManager
-      .getAllMeta()
-      .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
-      .sort((a, b) => a.priority - b.priority);
-    return candidates[0]?.label ?? 'Sin cuenta activa';
+    return sortedActiveAnthropic()[0]?.label ?? 'Sin cuenta activa';
   };
 
   // --- commands ----------------------------------------------------------
@@ -308,6 +339,33 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('keyRotator.openChat', () => {
       ChatPanel.createOrShow(context.extensionUri, chatBackend, activeChatAccountLabel);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.loginProfile', async () => {
+      const accounts = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
+      if (accounts.length === 0) {
+        vscode.window.showInformationMessage('KeyRotator: agrega primero una cuenta de Anthropic.');
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
+        { placeHolder: 'Inicia sesión en el perfil de qué cuenta (modo chat "profiles")' }
+      );
+      if (!picked) return;
+
+      // Open a terminal scoped to this account's CLAUDE_CONFIG_DIR and run the
+      // interactive login. The OAuth credential is stored only in that dir, so
+      // each account keeps its own login + claude.ai-managed MCPs.
+      const dir = profileDir(picked.id);
+      const terminal = vscode.window.createTerminal({
+        name: `KeyRotator login: ${picked.label}`,
+        env: { CLAUDE_CONFIG_DIR: dir },
+      });
+      terminal.show();
+      terminal.sendText('claude /login');
+      vscode.window.showInformationMessage(
+        `Iniciando sesión para "${picked.label}". Completa el login en el navegador; cuando termine, ya puedes usar el chat con esta cuenta.`
+      );
     }),
 
     vscode.commands.registerCommand('keyRotator.addAccount', () => {

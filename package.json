@@ -29,6 +29,7 @@
       { "command": "keyRotator.disableAccount", "title": "KeyRotator: Disable Account", "icon": "$(circle-slash)" },
       { "command": "keyRotator.openDashboard", "title": "KeyRotator: Open Dashboard", "icon": "$(dashboard)" },
       { "command": "keyRotator.openChat", "title": "KeyRotator: Open Chat", "icon": "$(comment-discussion)" },
+      { "command": "keyRotator.loginProfile", "title": "KeyRotator: Log in Account (Chat)", "icon": "$(sign-in)" },
       { "command": "keyRotator.reportRateLimit", "title": "KeyRotator: Report Rate Limit on Active Account" },
       { "command": "keyRotator.rotateNow", "title": "KeyRotator: Rotate Now" }
     ],
@@ -70,13 +71,14 @@
         },
         "keyRotator.chatMode": {
           "type": "string",
-          "enum": ["failover", "full"],
+          "enum": ["profiles", "failover", "full"],
           "enumDescriptions": [
-            "Failover (recomendado): usa las API keys de tus cuentas y rota entre ellas al agotarse o quedarse sin saldo. Requiere saldo de API (consola de Anthropic). MCPs propios vía keyRotator.chatMcpConfig.",
-            "Full: usa tu login de Claude (suscripción) con los MCPs gestionados de claude.ai, Skills y hooks. Una sola cuenta, sin rotación."
+            "Profiles (recomendado): cada cuenta tiene su propio login de Claude (CLAUDE_CONFIG_DIR aislado) → integraciones gestionadas de claude.ai (Canva, Drive, Gmail) + rotación multi-cuenta. Requiere iniciar sesión en cada cuenta una vez (comando 'KeyRotator: Log in Account (Chat)').",
+            "Failover: usa las API keys de tus cuentas y rota al agotarse. Requiere saldo de API. MCPs propios vía keyRotator.chatMcpConfig (sin las integraciones de claude.ai).",
+            "Full: tu login por defecto de Claude. Integraciones de claude.ai, una sola cuenta, sin rotación."
           ],
-          "default": "failover",
-          "description": "Cómo autentica el KeyRotator Chat. 'failover' = rotación multi-cuenta por API key (orientado a API). 'full' = tu login/suscripción."
+          "default": "profiles",
+          "description": "Cómo autentica el KeyRotator Chat. 'profiles' = login por cuenta (integraciones claude.ai + rotación). 'failover' = API key + rotación. 'full' = login único."
         },
         "keyRotator.chatMcpConfig": {
           "type": "string",

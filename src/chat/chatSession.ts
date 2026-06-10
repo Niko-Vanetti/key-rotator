@@ -4,19 +4,26 @@ import {
   isRateLimitBlock,
   isRateLimitResult,
   isRateLimitText,
+  isNotLoggedIn,
 } from './streamParser.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
   id: string;
   label: string;
-  /** API key for `failover` mode. Omitted/empty in `full` (login) mode. */
+  /** API key for `failover` mode. Omitted/empty in login/profile modes. */
   apiKey?: string;
   /**
    * When true the turn runs against the user's logged-in Claude (OAuth /
    * subscription) with full MCPs/skills — no API key is injected.
    */
   useLogin?: boolean;
+  /**
+   * `profiles` mode: per-account `CLAUDE_CONFIG_DIR` holding this account's own
+   * OAuth login, so its claude.ai-managed MCPs (Canva, Drive, …) load and
+   * failover can roll between accounts while keeping full features.
+   */
+  configDir?: string;
 }
 
 /**
@@ -101,6 +108,19 @@ export class ChatSession {
           return;
         }
 
+        if (outcome.kind === 'notLoggedIn') {
+          if (account.configDir) {
+            handlers.onError(
+              `La cuenta "${account.label}" no tiene sesión iniciada. Ejecuta el comando "KeyRotator: Log in Account (Chat)" y elige "${account.label}" para iniciar sesión una vez.`
+            );
+          } else {
+            handlers.onError(
+              `No hay sesión de Claude iniciada. Inicia sesión con el CLI claude (o configura una API key con saldo y usa el modo "failover").`
+            );
+          }
+          return;
+        }
+
         // outcome.kind === 'rateLimit' → rotate and retry the same turn.
         const next = await this.backend.rotateFrom(account.id);
         if (!next) {
@@ -130,7 +150,12 @@ export class ChatSession {
     text: string,
     account: ActiveAccount,
     handlers: TurnHandlers
-  ): Promise<{ kind: 'ok'; text: string } | { kind: 'rateLimit' } | { kind: 'error'; message: string }> {
+  ): Promise<
+    | { kind: 'ok'; text: string }
+    | { kind: 'rateLimit' }
+    | { kind: 'notLoggedIn' }
+    | { kind: 'error'; message: string }
+  > {
     return new Promise((resolve) => {
       const { command, baseArgs, useShell } = this.backend.getLauncher();
       const args = [...baseArgs, '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'];
@@ -142,14 +167,18 @@ export class ChatSession {
         args.push('--model', model);
       }
 
-      // In login (full) mode, run against the user's OAuth subscription with
-      // full MCPs/skills — strip any inherited API key so it isn't used. In
-      // failover mode, inject the active account's API key for billing.
+      // Build the child env per auth mode:
+      // - failover: inject the account's API key for billing.
+      // - full/profiles: strip the API key so the OAuth login is used.
+      // - profiles: also point CLAUDE_CONFIG_DIR at this account's login dir.
       const env: NodeJS.ProcessEnv = { ...process.env };
-      if (account.useLogin || !account.apiKey) {
-        delete env.ANTHROPIC_API_KEY;
-      } else {
+      if (account.apiKey && !account.useLogin && !account.configDir) {
         env.ANTHROPIC_API_KEY = account.apiKey;
+      } else {
+        delete env.ANTHROPIC_API_KEY;
+      }
+      if (account.configDir) {
+        env.CLAUDE_CONFIG_DIR = account.configDir;
       }
 
       let child: ChildProcessWithoutNullStreams;
@@ -170,7 +199,13 @@ export class ChatSession {
       let assembled = '';
       let rateLimited = false;
 
-      const finish = (r: { kind: 'ok'; text: string } | { kind: 'rateLimit' } | { kind: 'error'; message: string }) => {
+      const finish = (
+        r:
+          | { kind: 'ok'; text: string }
+          | { kind: 'rateLimit' }
+          | { kind: 'notLoggedIn' }
+          | { kind: 'error'; message: string }
+      ) => {
         if (settled) return;
         settled = true;
         resolve(r);
@@ -213,8 +248,11 @@ export class ChatSession {
             case 'result':
               if (ev.sessionId) this.sessionId = ev.sessionId;
               if (ev.isError) {
+                const errText = `${ev.text} ${JSON.stringify(ev.raw.api_error_status ?? '')}`;
                 if (isRateLimitResult(ev.raw)) {
                   finish({ kind: 'rateLimit' });
+                } else if (isNotLoggedIn(errText)) {
+                  finish({ kind: 'notLoggedIn' });
                 } else {
                   finish({ kind: 'error', message: `Error de claude: ${ev.text || JSON.stringify(ev.raw.api_error_status ?? 'desconocido')}` });
                 }
@@ -239,6 +277,8 @@ export class ChatSession {
         if (settled) return;
         if (rateLimited || isRateLimitText(stderrBuf)) {
           finish({ kind: 'rateLimit' });
+        } else if (isNotLoggedIn(stderrBuf)) {
+          finish({ kind: 'notLoggedIn' });
         } else if (code === 0) {
           finish({ kind: 'ok', text: assembled });
         } else {

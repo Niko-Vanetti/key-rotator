@@ -156,6 +156,7 @@ try {
 const expectedCommands = [
   'keyRotator.openDashboard',
   'keyRotator.openChat',
+  'keyRotator.loginProfile',
   'keyRotator.addAccount',
   'keyRotator.activateAccount',
   'keyRotator.disableAccount',

@@ -5,6 +5,7 @@ import {
   isRateLimitBlock,
   isRateLimitResult,
   isRateLimitText,
+  isNotLoggedIn,
 } from '../src/chat/streamParser.ts';
 
 test('classifies system:init with session and key source', () => {
@@ -88,6 +89,20 @@ test('isRateLimitText matches stderr usage-limit messages', () => {
   assert.strictEqual(isRateLimitText('Error: rate limit reached for this key'), true);
   assert.strictEqual(isRateLimitText('Claude usage limit reached'), true);
   assert.strictEqual(isRateLimitText('command not found'), false);
+});
+
+test('isNotLoggedIn detects auth/login failures (profiles setup)', () => {
+  assert.strictEqual(isNotLoggedIn('Not logged in · Please run /login'), true);
+  assert.strictEqual(isNotLoggedIn('Please log in to continue'), true);
+  assert.strictEqual(isNotLoggedIn('Invalid API key'), true);
+  assert.strictEqual(isNotLoggedIn('rate limit exceeded'), false);
+  assert.strictEqual(isNotLoggedIn('Hola, ¿cómo estás?'), false);
+});
+
+test('not-logged-in is distinct from rate-limit', () => {
+  // A "Not logged in" error must NOT be treated as a rate-limit (no rotation).
+  assert.strictEqual(isRateLimitResult({ is_error: true, result: 'Not logged in · Please run /login' }), false);
+  assert.strictEqual(isNotLoggedIn('Not logged in · Please run /login'), true);
 });
 
 test('unknown event types fall through to other', () => {

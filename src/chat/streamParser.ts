@@ -107,3 +107,10 @@ export function isRateLimitResult(raw: Record<string, unknown>): boolean {
 export function isRateLimitText(text: string): boolean {
   return RATE_LIMIT_RX.test(text);
 }
+
+const NOT_LOGGED_IN_RX = /not logged in|please run \/login|please log ?in|run \/login|invalid api key|authentication_error|no auth/i;
+
+/** True when the failure is an auth/login problem (profiles mode setup), not a limit. */
+export function isNotLoggedIn(text: string): boolean {
+  return NOT_LOGGED_IN_RX.test(text);
+}

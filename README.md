@@ -47,10 +47,24 @@ code --install-extension key-rotator-0.1.0.vsix
 ## Chat con failover
 
 El **Chat** te deja conversar con Claude dentro de VS Code lanzando el CLI `claude` por
-debajo (un proceso por turno, continuidad con `--resume`). Está **orientado a API** por
-defecto. Tiene **dos modos** (`keyRotator.chatMode`):
+debajo (un proceso por turno, continuidad con `--resume`). Tiene **tres modos**
+(`keyRotator.chatMode`):
 
-### Modo `failover` (por defecto) — rotación multi-cuenta por API key
+### Modo `profiles` (por defecto, recomendado) — integraciones de claude.ai + rotación
+
+Da **lo mejor de todo**: las integraciones gestionadas de claude.ai (Canva, Drive, Gmail,
+Calendar) **Y** rotación multi-cuenta. Cada cuenta usa un **login propio aislado** vía un
+`CLAUDE_CONFIG_DIR` separado (bajo el almacenamiento de la extensión), así que cada una
+trae sus propios MCPs gestionados, Skills y hooks. Al llegar al límite de uso de una
+cuenta, KeyRotator rota a la siguiente cambiando el `CLAUDE_CONFIG_DIR` y continúa con
+`--resume`.
+
+**Setup (una sola vez por cuenta):** ejecutá **"KeyRotator: Log in Account (Chat)"**,
+elegí la cuenta, y completá el login en el navegador. Repetí para cada cuenta. Listo.
+
+Si una cuenta no tiene sesión iniciada, el chat te lo dice y te indica el comando.
+
+### Modo `failover` — rotación multi-cuenta por API key
 
 Lanza `claude --bare`, que fuerza autenticación por `ANTHROPIC_API_KEY`. Usa la cuenta de
 Anthropic **activa de mayor prioridad** y, cuando llega a su límite de uso **o se queda
@@ -76,30 +90,28 @@ sin saldo de API**, KeyRotator:
 > key no tiene crédito verás "Credit balance is too low" y KeyRotator rotará buscando una
 > que sí tenga.
 
-### Modo `full` — tu login/suscripción con las integraciones de claude.ai
+### Modo `full` — tu login por defecto, sin rotación
 
-Usa tu **login de Claude** (Pro/Max vía OAuth), igual que Claude Code normal: hereda los
-**MCPs gestionados de claude.ai**, Skills, hooks y el `CLAUDE.md` del proyecto. Es una
-sola cuenta (OAuth no se cambia por invocación), así que **no hay rotación** en este modo.
-Útil cuando necesitás las integraciones de claude.ai o no querés gastar crédito de API.
+Usa tu **login de Claude por defecto** (el del Claude Code normal): hereda los MCPs
+gestionados de claude.ai, Skills, hooks y `CLAUDE.md`. Una sola cuenta, **sin rotación**.
+Cero setup, pero sin failover.
 
 ### Uso
 
 1. Abrí el chat con el botón 💬 en la barra de la vista KeyRotator o el comando
    **"KeyRotator: Open Chat"**.
-2. (Opcional) Elegí el modo en Settings → `keyRotator.chatMode`. Por defecto `failover`.
-3. Escribí normalmente. El badge del encabezado muestra qué credencial está activa; el
-   botón "＋ Nuevo" inicia una conversación limpia.
+2. En modo `profiles` (default): iniciá sesión en cada cuenta una vez con
+   **"KeyRotator: Log in Account (Chat)"**.
+3. Escribí normalmente. El badge del encabezado muestra qué cuenta está activa; el botón
+   "＋ Nuevo" inicia una conversación limpia.
 
-Requisitos: el CLI `claude` instalado y en el `PATH` (el mismo Claude Code). Para modo
-`failover`, API keys con **saldo de API** en la consola de Anthropic.
+Requisitos: el CLI `claude` instalado y en el `PATH` (el mismo Claude Code).
 
-> Nota de plataforma: no se pueden tener **a la vez** los MCPs gestionados de claude.ai
-> Y la rotación multi-cuenta. Forzar la API key requiere `--bare`, que apaga los MCPs
-> gestionados (los propios sí se cargan con `--mcp-config`); sin `--bare`, Claude usa tu
-> login OAuth (una sola cuenta) y no se cambia de cuenta a mitad de sesión. El chat
-> tampoco "continúa" la sesión de Claude Code abierta en el panel — es una superficie
-> separada. Son límites de la plataforma de Claude Code, no de KeyRotator.
+> Nota de plataforma: el chat es una superficie **separada** de la sesión de Claude Code
+> que ya tenés abierta en el panel — no "continúa" esa sesión OAuth concreta (límite de
+> plataforma). Lo que sí logra el modo `profiles` es darte una experiencia de chat
+> ininterrumpida, con todas las integraciones de claude.ai, que **rueda entre tus
+> cuentas** cuando una llega a su límite — usando un login aislado por cuenta.
 
 ## Configuración
 
@@ -109,7 +121,7 @@ Requisitos: el CLI `claude` instalado y en el `PATH` (el mismo Claude Code). Par
 | `keyRotator.geminiApiKey` | `""` | API key de Gemini para identificación de proveedores desconocidos (opcional) |
 | `keyRotator.preferPrimary` | `true` | Volver a la cuenta de mayor prioridad cuando se recupera |
 | `keyRotator.chatModel` | `""` | Modelo para el Chat (`opus`, `sonnet`, o un id completo). Vacío = default del CLI |
-| `keyRotator.chatMode` | `"failover"` | `failover` = rotación multi-cuenta por API key (orientado a API). `full` = login/suscripción con MCPs gestionados de claude.ai |
+| `keyRotator.chatMode` | `"profiles"` | `profiles` = login aislado por cuenta (integraciones claude.ai + rotación). `failover` = API key + rotación. `full` = login único sin rotación |
 | `keyRotator.chatMcpConfig` | `""` | Ruta a un JSON `{"mcpServers":{...}}` para cargar MCPs propios en el chat (`--mcp-config`), también en modo API |
 | `keyRotator.chatExtraArgs` | `[]` | Argumentos extra para el CLI claude del chat (`--plugin-dir`, `--add-dir`, `--agents`, etc.) |
 
