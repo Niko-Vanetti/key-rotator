@@ -170,9 +170,19 @@
     const msg = event.data;
     switch (msg.type) {
       case 'config':
-        if (typeof msg.model === 'string') modelSelect.value = [...modelSelect.options].some((o) => o.value === msg.model) ? msg.model : '';
         if (typeof msg.effort === 'string') effortSelect.value = msg.effort;
         break;
+      case 'models': {
+        // Copilot-style: dropdown populated with the models the API key supports.
+        modelSelect.innerHTML = '';
+        (msg.models || []).forEach((m) => {
+          const o = document.createElement('option');
+          o.value = m.id; o.textContent = m.label;
+          modelSelect.appendChild(o);
+        });
+        if (msg.selected) modelSelect.value = msg.selected;
+        break;
+      }
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'slash': slashCommands = msg.commands || []; break;
       case 'history':

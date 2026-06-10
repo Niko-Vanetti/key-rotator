@@ -67,6 +67,19 @@ export class ChatPanel {
     void this.panel.webview.postMessage(msg);
   }
 
+  /** Detect the active key's models and push them to the dropdown (Copilot-style). */
+  private async postModels(): Promise<void> {
+    const models = await this.backend.listModels();
+    const cfg = vscode.workspace.getConfiguration('keyRotator');
+    let selected = cfg.get<string>('chatModel', '').trim();
+    if (!selected || !models.some((m) => m.id === selected)) {
+      selected = models[0]?.id ?? '';
+      if (selected) await cfg.update('chatModel', selected, vscode.ConfigurationTarget.Global);
+    }
+    this.session.setModel(selected || null);
+    this.post({ type: 'models', models, selected });
+  }
+
   private loadSession(id: string): void {
     if (this.session.isBusy()) return;
     const loaded = this.backend.loadHistory(id);
@@ -89,14 +102,13 @@ export class ChatPanel {
     switch (msg.type) {
       case 'ready': {
         const cfg = vscode.workspace.getConfiguration('keyRotator');
-        const model = cfg.get<string>('chatModel', '').trim();
         const effort = cfg.get<string>('chatEffort', '').trim();
-        this.session.setModel(model || null);
         this.session.setEffort(effort || null);
         this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
-        this.post({ type: 'config', model, effort });
+        this.post({ type: 'config', effort });
         this.post({ type: 'accounts', accounts: this.backend.listChatAccounts() });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
+        void this.postModels();
         break;
       }
 
@@ -128,6 +140,8 @@ export class ChatPanel {
           await vscode.commands.executeCommand('keyRotator.setChatAccount', { account: { id: msg.id } });
           this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
           this.post({ type: 'accounts', accounts: this.backend.listChatAccounts() });
+          // Different account → its key may expose different models.
+          void this.postModels();
         }
         break;
       case 'addAccount':

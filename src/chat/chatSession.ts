@@ -55,6 +55,8 @@ export interface ChatBackend {
   getSlashCommands(): string[];
   /** Accounts available for the chat (for the account menu). */
   listChatAccounts(): { id: string; label: string; active: boolean }[];
+  /** Auto-detect the models the active account's API key can use. */
+  listModels(): Promise<{ id: string; label: string }[]>;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */

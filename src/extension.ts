@@ -351,6 +351,33 @@ export function activate(context: vscode.ExtensionContext) {
     listSessions: () => listNamedSessions(),
     loadHistory: (id: string) => loadSession(id),
     getSlashCommands: () => listSlashCommands(),
+    listModels: async () => {
+      // GitHub-Copilot-style: detect the models the active key can use via the
+      // Anthropic Models API. Falls back to a known set on error / no key.
+      const fallback = [
+        { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+        { id: 'claude-fable-5', label: 'Claude Fable 5' },
+        { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+        { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+      ];
+      const meta = sortedActiveAnthropic()[0];
+      if (!meta) return fallback;
+      const key = await keyManager.getApiKey(meta.id);
+      if (!key) return fallback;
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+          signal: AbortSignal.timeout(10000),
+        });
+        const json = (await res.json()) as { data?: { id: string; display_name?: string }[] };
+        if (Array.isArray(json.data) && json.data.length > 0) {
+          return json.data.map((m) => ({ id: m.id, label: m.display_name || m.id }));
+        }
+      } catch {
+        // network / auth error — fall back
+      }
+      return fallback;
+    },
     listChatAccounts: () => {
       const activeId = sortedActiveAnthropic()[0]?.id;
       return keyManager

@@ -52,7 +52,7 @@ export class AccountsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     item.iconPath = isActiveChat
       ? new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.green'))
       : STATUS_ICONS[account.status];
-    item.description = `${isActiveChat ? '★ chat · ' : ''}prio ${account.priority} · ${account.switchMode}`;
+    item.description = isActiveChat ? '★ chat' : '';
     item.tooltip = isActiveChat
       ? `${account.label} — el chat usa esta API. Clic en otra para cambiar.`
       : `${account.label} — clic para que el chat use esta API.`;
