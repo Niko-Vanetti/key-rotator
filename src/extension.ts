@@ -99,23 +99,11 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function applyEnvVar(account: Account): Promise<void> {
-    // Update the process env for the current extension host session.
+    // Update the process env for the current extension host session. The chat
+    // injects the key per-spawn; we intentionally do NOT write secrets into
+    // .claude/settings.json (the old mirror risked leaking keys to disk and,
+    // when the workspace is the home folder, contaminating global settings).
     process.env[account.envVar] = account.apiKey;
-
-    // Mirror into .claude/settings.json when present (Claude Code integration).
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) return;
-
-    const settingsUri = vscode.Uri.joinPath(folders[0].uri, '.claude', 'settings.json');
-    try {
-      const raw = await vscode.workspace.fs.readFile(settingsUri);
-      const json = JSON.parse(Buffer.from(raw).toString('utf-8'));
-      json.env = json.env ?? {};
-      json.env[account.envVar] = account.apiKey;
-      await vscode.workspace.fs.writeFile(settingsUri, Buffer.from(JSON.stringify(json, null, 2), 'utf-8'));
-    } catch {
-      // .claude/settings.json doesn't exist or isn't valid JSON — skip silently
-    }
   }
 
   async function handleRateLimit(accountId: string): Promise<void> {
