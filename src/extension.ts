@@ -186,9 +186,9 @@ export function activate(context: vscode.ExtensionContext) {
   // --- chat backend ------------------------------------------------------
 
   const getChatMode = (): 'full' | 'failover' =>
-    vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'full') === 'failover'
-      ? 'failover'
-      : 'full';
+    vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'failover') === 'full'
+      ? 'full'
+      : 'failover';
 
   /** Resolve the account/credential the next turn should use. */
   async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
@@ -265,15 +265,29 @@ export function activate(context: vscode.ExtensionContext) {
       }
       return dir.fsPath;
     },
-    getLauncher: () => ({
-      // On Windows `claude` is a .cmd shim — resolve it via the shell. On
-      // POSIX, spawning through the shell also resolves it from PATH.
-      // `--bare` (failover mode) forces ANTHROPIC_API_KEY auth but disables
-      // MCPs/hooks; full mode omits it to inherit the user's full Claude env.
-      command: 'claude',
-      baseArgs: getChatMode() === 'failover' ? ['--bare'] : [],
-      useShell: true,
-    }),
+    getLauncher: () => {
+      const cfg = vscode.workspace.getConfiguration('keyRotator');
+      // `--bare` (failover mode) forces ANTHROPIC_API_KEY auth but disables the
+      // managed claude.ai MCPs/hooks; full mode omits it to inherit the login.
+      const baseArgs: string[] = getChatMode() === 'failover' ? ['--bare'] : [];
+
+      // Load the user's own MCP servers — works even under --bare, so the API
+      // mode keeps custom MCPs (the claude.ai-managed ones still need 'full').
+      const mcpConfig = cfg.get<string>('chatMcpConfig', '').trim();
+      if (mcpConfig) baseArgs.push('--mcp-config', mcpConfig);
+
+      // Escape hatch for --plugin-dir / --add-dir / --agents / --settings etc.
+      const extra = cfg.get<string[]>('chatExtraArgs', []);
+      if (Array.isArray(extra)) baseArgs.push(...extra.filter((a) => typeof a === 'string' && a.length > 0));
+
+      return {
+        // On Windows `claude` is a .cmd shim — resolve it via the shell. On
+        // POSIX, spawning through the shell also resolves it from PATH.
+        command: 'claude',
+        baseArgs,
+        useShell: true,
+      };
+    },
   };
 
   const activeChatAccountLabel = (): string => {

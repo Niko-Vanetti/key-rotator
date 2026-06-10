@@ -70,13 +70,24 @@
         },
         "keyRotator.chatMode": {
           "type": "string",
-          "enum": ["full", "failover"],
+          "enum": ["failover", "full"],
           "enumDescriptions": [
-            "Full: usa tu login de Claude (suscripción) con todos los MCPs, Skills, hooks y CLAUDE.md. Una sola cuenta, sin rotación.",
-            "Failover: usa las API keys de tus cuentas y rota entre ellas al agotarse (requiere saldo de API). Sin MCPs (modo --bare)."
+            "Failover (recomendado): usa las API keys de tus cuentas y rota entre ellas al agotarse o quedarse sin saldo. Requiere saldo de API (consola de Anthropic). MCPs propios vía keyRotator.chatMcpConfig.",
+            "Full: usa tu login de Claude (suscripción) con los MCPs gestionados de claude.ai, Skills y hooks. Una sola cuenta, sin rotación."
           ],
-          "default": "full",
-          "description": "Cómo autentica el KeyRotator Chat. 'full' = tu login/suscripción con todas las funciones de Claude. 'failover' = rotación multi-cuenta por API key."
+          "default": "failover",
+          "description": "Cómo autentica el KeyRotator Chat. 'failover' = rotación multi-cuenta por API key (orientado a API). 'full' = tu login/suscripción."
+        },
+        "keyRotator.chatMcpConfig": {
+          "type": "string",
+          "default": "",
+          "description": "Opcional: ruta a un archivo JSON de configuración MCP (formato {\"mcpServers\":{...}}). Se pasa con --mcp-config para cargar tus servidores MCP propios en el chat, incluso en modo API (failover). Nota: las integraciones gestionadas de claude.ai (Canva, Drive, Gmail) requieren modo 'full'."
+        },
+        "keyRotator.chatExtraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Opcional: argumentos extra para el CLI claude del chat (ej: [\"--plugin-dir\", \"C:/ruta/plugin\", \"--add-dir\", \"C:/proyecto\"]). Útil para cargar skills/plugins/agents propios en modo API."
         }
       }
     }
