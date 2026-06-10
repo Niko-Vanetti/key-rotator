@@ -287,7 +287,12 @@
         streamingRaw = ''; streamingEl = addMessage('assistant', '', false); streamingEl.parentElement.classList.add('streaming');
         break;
       case 'info': addNotice('info', msg.text); break;
-      case 'turnError': finalizeStreaming(); addNotice('error', '⚠ ' + msg.text); setSending(false); break;
+      case 'turnError':
+        // Drop the partial bubble — its text was an error notice, not a reply.
+        if (streamingEl) { streamingEl.parentElement.remove(); streamingEl = null; streamingRaw = ''; }
+        addNotice('error', '⚠ ' + msg.text);
+        setSending(false);
+        break;
       case 'done': finalizeStreaming(); setSending(false); break;
     }
   });

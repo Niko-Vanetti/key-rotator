@@ -4,6 +4,7 @@ import {
   isRateLimitBlock,
   isRateLimitResult,
   isRateLimitText,
+  isLimitMessageText,
   isNotLoggedIn,
 } from './streamParser.js';
 import type { SessionSummary, ChatMessage } from './sessionStore.js';
@@ -39,10 +40,11 @@ export interface ChatBackend {
    */
   resolveActiveAccount(preferredId?: string | null): Promise<ActiveAccount | null>;
   /**
-   * Mark `accountId` rate-limited, rotate to the next eligible account, and
-   * return it (or null if every account is exhausted).
+   * Mark `accountId` exhausted (with a human-readable reason: usage limit,
+   * credit too low, …), rotate to the next eligible account, and return it
+   * (or null if every account is exhausted).
    */
-  rotateFrom(accountId: string): Promise<ActiveAccount | null>;
+  rotateFrom(accountId: string, reason?: string): Promise<ActiveAccount | null>;
   /** Optional model alias / id to pass to `claude --model`. */
   getModel(): string | undefined;
   /** Optional effort level (low|medium|high|xhigh|max) for `claude --effort`. */
@@ -179,7 +181,7 @@ export class ChatSession {
         }
 
         // outcome.kind === 'rateLimit' → rotate and retry the same turn.
-        const next = await this.backend.rotateFrom(account.id);
+        const next = await this.backend.rotateFrom(account.id, outcome.reason);
         if (!next) {
           if (account.useLogin) {
             handlers.onError(
@@ -187,12 +189,12 @@ export class ChatSession {
             );
           } else {
             handlers.onError(
-              `Se agotaron todas las cuentas con API key disponibles. Última: ${account.label}. Revisa que tengan saldo de API (consola de Anthropic) o agrega otra cuenta.`
+              `Ninguna API utilizable ahora. Última: ${account.label} (${outcome.reason || 'límite alcanzado'}). Usa "Probar cuenta" en el panel de Accounts para ver el estado real de cada key.`
             );
           }
           return;
         }
-        handlers.onAccountSwitch(next.label, 'límite alcanzado');
+        handlers.onAccountSwitch(next.label, outcome.reason || 'límite alcanzado');
         account = next;
       }
 
@@ -209,7 +211,7 @@ export class ChatSession {
     handlers: TurnHandlers
   ): Promise<
     | { kind: 'ok'; text: string }
-    | { kind: 'rateLimit' }
+    | { kind: 'rateLimit'; reason: string }
     | { kind: 'notLoggedIn' }
     | { kind: 'error'; message: string }
   > {
@@ -265,7 +267,7 @@ export class ChatSession {
       const finish = (
         r:
           | { kind: 'ok'; text: string }
-          | { kind: 'rateLimit' }
+          | { kind: 'rateLimit'; reason: string }
           | { kind: 'notLoggedIn' }
           | { kind: 'error'; message: string }
       ) => {
@@ -273,6 +275,8 @@ export class ChatSession {
         settled = true;
         resolve(r);
       };
+
+      const shortReason = (t: string) => (t || 'límite alcanzado').replace(/\s+/g, ' ').trim().slice(0, 100);
 
       child.stdout.setEncoding('utf-8');
       child.stdout.on('data', (chunk: string) => {
@@ -315,14 +319,21 @@ export class ChatSession {
               if (ev.isError) {
                 const errText = `${ev.text} ${JSON.stringify(ev.raw.api_error_status ?? '')}`;
                 if (isRateLimitResult(ev.raw)) {
-                  finish({ kind: 'rateLimit' });
+                  finish({ kind: 'rateLimit', reason: shortReason(ev.text) });
                 } else if (isNotLoggedIn(errText)) {
                   finish({ kind: 'notLoggedIn' });
                 } else {
                   finish({ kind: 'error', message: `Error de claude: ${ev.text || JSON.stringify(ev.raw.api_error_status ?? 'desconocido')}` });
                 }
               } else {
-                finish({ kind: 'ok', text: assembled || ev.text });
+                const finalText = assembled || ev.text;
+                // Claude can return the limit notice as a SUCCESS whose text is
+                // "You've hit your session limit · resets …" — rotate on it.
+                if (isLimitMessageText(finalText)) {
+                  finish({ kind: 'rateLimit', reason: shortReason(finalText) });
+                } else {
+                  finish({ kind: 'ok', text: finalText });
+                }
               }
               break;
           }
@@ -341,11 +352,15 @@ export class ChatSession {
       child.on('close', (code) => {
         if (settled) return;
         if (rateLimited || isRateLimitText(stderrBuf)) {
-          finish({ kind: 'rateLimit' });
+          finish({ kind: 'rateLimit', reason: shortReason(stderrBuf || 'límite de uso') });
         } else if (isNotLoggedIn(stderrBuf)) {
           finish({ kind: 'notLoggedIn' });
         } else if (code === 0) {
-          finish({ kind: 'ok', text: assembled });
+          if (isLimitMessageText(assembled)) {
+            finish({ kind: 'rateLimit', reason: shortReason(assembled) });
+          } else {
+            finish({ kind: 'ok', text: assembled });
+          }
         } else {
           finish({
             kind: 'error',

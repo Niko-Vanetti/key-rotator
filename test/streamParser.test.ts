@@ -5,6 +5,7 @@ import {
   isRateLimitBlock,
   isRateLimitResult,
   isRateLimitText,
+  isLimitMessageText,
   isNotLoggedIn,
 } from '../src/chat/streamParser.ts';
 
@@ -103,6 +104,16 @@ test('not-logged-in is distinct from rate-limit', () => {
   // A "Not logged in" error must NOT be treated as a rate-limit (no rotation).
   assert.strictEqual(isRateLimitResult({ is_error: true, result: 'Not logged in · Please run /login' }), false);
   assert.strictEqual(isNotLoggedIn('Not logged in · Please run /login'), true);
+});
+
+test('isLimitMessageText catches limit notices returned as SUCCESS replies', () => {
+  // The exact bug the user hit: success result whose text is the limit notice.
+  assert.strictEqual(isLimitMessageText("You've hit your session limit · resets 11:10pm (America/Santo_Domingo)"), true);
+  assert.strictEqual(isLimitMessageText("You've hit your usage limit"), true);
+  assert.strictEqual(isLimitMessageText('Session limit reached · resets 5pm'), true);
+  // Normal replies that merely mention limits must NOT trigger rotation.
+  assert.strictEqual(isLimitMessageText('Los límites de uso de la API se configuran en la consola.'), false);
+  assert.strictEqual(isLimitMessageText('Hola, ¿en qué te ayudo?'), false);
 });
 
 test('unknown event types fall through to other', () => {

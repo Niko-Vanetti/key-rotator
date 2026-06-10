@@ -11,6 +11,7 @@ export interface Account {
   priority: number; // 1 = highest priority
   switchMode: SwitchMode;
   status: AccountStatus;
+  lastError?: string; // why the account became unusable (shown in UI)
 }
 
 // Account metadata persisted in globalState (apiKey lives in SecretStorage, keyed by id)

@@ -276,19 +276,39 @@ export function activate(context: vscode.ExtensionContext) {
     return { id: meta.id, label: meta.label, apiKey };
   }
 
-  /** Mark `accountId` rate-limited, rotate, and return the next account. */
-  async function rotateChatFrom(accountId: string): Promise<ActiveAccount | null> {
+  /** Mark `accountId` exhausted (with reason), rotate, return next account. */
+  async function rotateChatFrom(accountId: string, reason?: string): Promise<ActiveAccount | null> {
     const mode = getChatMode();
     // No cross-account rotation in full (single-login) mode.
     if (mode === 'full') return null;
 
     const accounts = keyManager.getAllMeta();
     const from = accounts.find((a) => a.id === accountId);
-    await keyManager.updateAccountMeta(accountId, { status: 'rate-limited' });
+    // Credit/billing problems are persistent ('error', needs user action);
+    // usage limits are temporary ('rate-limited', auto-recovers).
+    const isCredit = /credit|saldo|billing|402|insufficient/i.test(reason ?? '');
+    await keyManager.updateAccountMeta(accountId, {
+      status: isCredit ? 'error' : 'rate-limited',
+      lastError: reason || 'límite de uso alcanzado',
+    });
 
     const next = pickNextAccount(applyRateLimit(accounts, accountId), CHAT_PROVIDER, accountId);
     if (!next) {
       refreshUI();
+      // Surface a clear "your APIs are unusable, check why" notice.
+      const broken = keyManager
+        .getAllMeta()
+        .filter((a) => a.provider === CHAT_PROVIDER && a.status !== 'active' && a.status !== 'disabled')
+        .map((a) => `"${a.label}": ${a.lastError ?? 'límite alcanzado'}`)
+        .join(' · ');
+      void vscode.window
+        .showErrorMessage(
+          `KeyRotator: ninguna API de Anthropic se puede usar ahora — ${broken}. Revisa saldo/límites en la consola de Anthropic.`,
+          'Probar cuentas'
+        )
+        .then((pick) => {
+          if (pick === 'Probar cuentas') void vscode.commands.executeCommand('keyRotator.testAccount');
+        });
       return null;
     }
 
@@ -434,6 +454,56 @@ export function activate(context: vscode.ExtensionContext) {
     return sortedActiveAnthropic()[0]?.label ?? 'Sin cuenta activa';
   };
 
+  /** Swap an account's priority with its neighbor (dir -1 = up, +1 = down). */
+  async function moveAccount(id: string | undefined, dir: -1 | 1): Promise<void> {
+    if (!id) return;
+    const all = keyManager.getAllMeta();
+    const acc = all.find((a) => a.id === id);
+    if (!acc) return;
+    const group = all.filter((a) => a.provider === acc.provider).sort((a, b) => a.priority - b.priority);
+    const idx = group.findIndex((a) => a.id === id);
+    const neighbor = group[idx + dir];
+    if (!neighbor) return; // already at the edge
+    await keyManager.updateAccountMeta(acc.id, { priority: neighbor.priority });
+    await keyManager.updateAccountMeta(neighbor.id, { priority: acc.priority });
+    refreshUI();
+  }
+
+  /**
+   * Real-world key check: (1) GET /v1/models validates the key itself, then
+   * (2) a 1-token haiku message validates billing/limits (costs < $0.0001).
+   */
+  async function diagnoseAccount(accountId: string): Promise<{ ok: boolean; detail: string }> {
+    const key = await keyManager.getApiKey(accountId);
+    if (!key) return { ok: false, detail: 'no hay API key guardada' };
+    try {
+      const auth = await fetch('https://api.anthropic.com/v1/models?limit=1', {
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (auth.status === 401 || auth.status === 403) return { ok: false, detail: 'API key inválida o revocada' };
+
+      const msg = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (msg.ok) return { ok: true, detail: 'utilizable — key válida y con saldo' };
+      const body = await msg.text();
+      if (msg.status === 429) return { ok: false, detail: 'límite de uso alcanzado (429) — espera el reset' };
+      if (/credit balance is too low/i.test(body)) return { ok: false, detail: 'sin saldo de API — recarga en console.anthropic.com → Billing' };
+      if (msg.status === 400 && /billing|credit/i.test(body)) return { ok: false, detail: 'problema de facturación — revisa la consola' };
+      return { ok: false, detail: `error ${msg.status}: ${body.slice(0, 120)}` };
+    } catch (e) {
+      return { ok: false, detail: `sin conexión o timeout (${(e as Error).message.slice(0, 60)})` };
+    }
+  }
+
   // --- commands ----------------------------------------------------------
 
   context.subscriptions.push(
@@ -453,6 +523,40 @@ export function activate(context: vscode.ExtensionContext) {
       ChatPanel.openSession(context.extensionUri, chatBackend, activeChatAccountLabel, null);
     }),
 
+    vscode.commands.registerCommand('keyRotator.moveAccountUp', async (node?: { account?: AccountMeta }) => {
+      await moveAccount(node?.account?.id, -1);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.moveAccountDown', async (node?: { account?: AccountMeta }) => {
+      await moveAccount(node?.account?.id, +1);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.testAccount', async (node?: { account?: AccountMeta }) => {
+      // Diagnose what the stored key can actually do right now.
+      let targets = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
+      if (node?.account?.id) targets = targets.filter((a) => a.id === node.account!.id);
+      if (targets.length === 0) {
+        vscode.window.showInformationMessage('KeyRotator: no hay cuentas de Anthropic para probar.');
+        return;
+      }
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'KeyRotator: probando cuentas…' },
+        async (progress) => {
+          for (const meta of targets) {
+            progress.report({ message: meta.label });
+            const verdict = await diagnoseAccount(meta.id);
+            await keyManager.updateAccountMeta(meta.id, {
+              status: verdict.ok ? 'active' : 'error',
+              lastError: verdict.ok ? undefined : verdict.detail,
+            });
+            const icon = verdict.ok ? '✅' : '⛔';
+            void vscode.window.showInformationMessage(`${icon} ${meta.label}: ${verdict.detail}`);
+          }
+          refreshUI();
+        }
+      );
+    }),
+
     vscode.commands.registerCommand('keyRotator.setChatAccount', async (node?: { account?: AccountMeta }) => {
       // Clicking an account in the tree makes the chat use its API.
       let id = node?.account?.id;
@@ -468,7 +572,7 @@ export function activate(context: vscode.ExtensionContext) {
       const acc = keyManager.getAllMeta().find((a) => a.id === id);
       // Make sure the chosen account is usable (not disabled).
       if (acc && acc.status === 'disabled') {
-        await keyManager.updateAccountMeta(id, { status: 'active' });
+        await keyManager.updateAccountMeta(id, { status: 'active', lastError: undefined });
       }
       await setPreferredId(id);
       refreshUI();
@@ -510,7 +614,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('keyRotator.activateAccount', async (node?: { account?: AccountMeta }) => {
       const id = node?.account?.id;
       if (!id) return;
-      await keyManager.updateAccountMeta(id, { status: 'active' });
+      await keyManager.updateAccountMeta(id, { status: 'active', lastError: undefined });
       refreshUI();
     }),
 
@@ -576,7 +680,7 @@ export function activate(context: vscode.ExtensionContext) {
         await handleRateLimit(accountId);
       } else if (status === 'ok' && meta.status === 'rate-limited') {
         const accounts = applyRecovery(keyManager.getAllMeta(), accountId);
-        await keyManager.updateAccountMeta(accountId, { status: 'active' });
+        await keyManager.updateAccountMeta(accountId, { status: 'active', lastError: undefined });
 
         if (preferPrimary) {
           const all = accounts.filter((a) => a.provider === meta.provider);

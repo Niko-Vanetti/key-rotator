@@ -108,6 +108,17 @@ export function isRateLimitText(text: string): boolean {
   return RATE_LIMIT_RX.test(text);
 }
 
+// Claude sometimes returns the limit notice as a SUCCESSFUL result whose text
+// is e.g. "You've hit your session limit · resets 11:10pm". Detect those so
+// they trigger rotation instead of being shown as a normal reply.
+const LIMIT_MESSAGE_RX =
+  /you'?ve hit your (session|usage|rate|weekly|monthly) limit|(session|usage) limit[^\n]*resets|l[ií]mite de (sesi[oó]n|uso)[^\n]*reinicia/i;
+
+/** True when a *successful* reply's text is actually a usage-limit notice. */
+export function isLimitMessageText(text: string): boolean {
+  return LIMIT_MESSAGE_RX.test(text);
+}
+
 const NOT_LOGGED_IN_RX = /not logged in|please run \/login|please log ?in|run \/login|invalid api key|authentication_error|no auth/i;
 
 /** True when the failure is an auth/login problem (profiles mode setup), not a limit. */

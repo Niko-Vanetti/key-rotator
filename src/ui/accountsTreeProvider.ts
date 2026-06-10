@@ -52,10 +52,30 @@ export class AccountsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     item.iconPath = isActiveChat
       ? new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.green'))
       : STATUS_ICONS[account.status];
-    item.description = isActiveChat ? '★ chat' : '';
-    item.tooltip = isActiveChat
-      ? `${account.label} — el chat usa esta API. Clic en otra para cambiar.`
-      : `${account.label} — clic para que el chat use esta API.`;
+
+    const statusNote =
+      account.status === 'error'
+        ? '⛔ revisar'
+        : account.status === 'rate-limited'
+          ? '⏳ en límite'
+          : account.status === 'disabled'
+            ? '🚫 desactivada'
+            : '';
+    item.description = [isActiveChat ? '★ chat' : '', `prio ${account.priority}`, statusNote]
+      .filter(Boolean)
+      .join(' · ');
+
+    const lines = [
+      `${account.label} (prioridad ${account.priority} — la nº1 se usa primero; reordena con las flechas)`,
+      isActiveChat ? 'El chat usa esta API ahora. Clic en otra cuenta para cambiar.' : 'Clic para que el chat use esta API.',
+      account.switchMode === 'auto'
+        ? 'Modo Auto: al llegar al límite rota sola a la siguiente cuenta.'
+        : 'Modo Confirmar: al llegar al límite te pregunta antes de rotar.',
+    ];
+    if (account.lastError) lines.push(`⛔ Último problema: ${account.lastError}`);
+    if (account.status === 'error') lines.push('Usa "Probar cuenta" (clic derecho) para re-diagnosticar.');
+    item.tooltip = lines.join('\n');
+
     item.id = account.id;
     // Clicking the account makes the chat use its API.
     item.command = {
