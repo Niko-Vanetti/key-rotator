@@ -41,6 +41,8 @@ export interface ChatBackend {
   rotateFrom(accountId: string): Promise<ActiveAccount | null>;
   /** Optional model alias / id to pass to `claude --model`. */
   getModel(): string | undefined;
+  /** Optional effort level (low|medium|high|xhigh|max) for `claude --effort`. */
+  getEffort(): string | undefined;
   /** Absolute cwd for the claude process (where new sessions persist). */
   getCwd(): string;
   /** How to launch claude — resolved executable + base args (platform-specific). */
@@ -58,6 +60,8 @@ export interface TurnHandlers {
   onInfo(text: string): void;
   onError(text: string): void;
   onDone(fullText: string): void;
+  /** Reports the actual model claude reported using (from the init event). */
+  onModel(model: string): void;
 }
 
 const MAX_FAILOVERS = 8;
@@ -71,9 +75,21 @@ const MAX_FAILOVERS = 8;
 export class ChatSession {
   private sessionId: string | null = null;
   private sessionCwd: string | null = null;
+  private modelOverride: string | null = null;
+  private effortOverride: string | null = null;
   private busy = false;
 
   constructor(private backend: ChatBackend) {}
+
+  /** Override the model for subsequent turns ('' / null → backend default). */
+  setModel(model: string | null): void {
+    this.modelOverride = model && model.length > 0 ? model : null;
+  }
+
+  /** Override the effort level for subsequent turns ('' / null → default). */
+  setEffort(effort: string | null): void {
+    this.effortOverride = effort && effort.length > 0 ? effort : null;
+  }
 
   get currentSessionId(): string | null {
     return this.sessionId;
@@ -179,9 +195,13 @@ export class ChatSession {
       if (this.sessionId) {
         args.push('--resume', this.sessionId);
       }
-      const model = this.backend.getModel();
+      const model = this.modelOverride ?? this.backend.getModel();
       if (model) {
         args.push('--model', model);
+      }
+      const effort = this.effortOverride ?? this.backend.getEffort();
+      if (effort) {
+        args.push('--effort', effort);
       }
 
       // Build the child env per auth mode:
@@ -248,6 +268,7 @@ export class ChatSession {
           switch (ev.kind) {
             case 'init':
               this.sessionId = ev.sessionId || this.sessionId;
+              if (ev.model) handlers.onModel(ev.model);
               break;
             case 'delta':
               assembled += ev.text;

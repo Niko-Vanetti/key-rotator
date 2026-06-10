@@ -30,6 +30,7 @@
       { "command": "keyRotator.openDashboard", "title": "KeyRotator: Open Dashboard", "icon": "$(dashboard)" },
       { "command": "keyRotator.openChat", "title": "KeyRotator: Open Chat", "icon": "$(comment-discussion)" },
       { "command": "keyRotator.loginProfile", "title": "KeyRotator: Log in Account (Chat)", "icon": "$(sign-in)" },
+      { "command": "keyRotator.setChatAccount", "title": "KeyRotator: Use this Account in Chat" },
       { "command": "keyRotator.reportRateLimit", "title": "KeyRotator: Report Rate Limit on Active Account" },
       { "command": "keyRotator.rotateNow", "title": "KeyRotator: Rotate Now" }
     ],
@@ -67,7 +68,13 @@
         "keyRotator.chatModel": {
           "type": "string",
           "default": "",
-          "description": "Optional: model alias or id for the KeyRotator Chat (e.g. 'opus', 'sonnet', or 'claude-opus-4-8'). Leave empty to use the Claude CLI default."
+          "description": "Modelo para el KeyRotator Chat (alias 'opus'/'sonnet'/'haiku' o id completo como 'claude-opus-4-8'). Vacío = default del CLI. También se puede cambiar desde el selector del chat."
+        },
+        "keyRotator.chatEffort": {
+          "type": "string",
+          "enum": ["", "low", "medium", "high", "xhigh", "max"],
+          "default": "",
+          "description": "Nivel de esfuerzo/razonamiento para el chat (--effort). Vacío = default del modelo. 'xhigh'/'max' = máxima calidad. También se cambia desde el selector del chat."
         },
         "keyRotator.chatMode": {
           "type": "string",

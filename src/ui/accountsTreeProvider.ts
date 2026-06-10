@@ -28,7 +28,10 @@ export class AccountsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  constructor(private getAccounts: () => AccountMeta[]) {}
+  constructor(
+    private getAccounts: () => AccountMeta[],
+    private getPreferredId: () => string | undefined = () => undefined
+  ) {}
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -45,9 +48,21 @@ export class AccountsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const { account } = element;
     const item = new vscode.TreeItem(account.label, vscode.TreeItemCollapsibleState.None);
     item.contextValue = 'account';
-    item.iconPath = STATUS_ICONS[account.status];
-    item.description = `prio ${account.priority} · ${account.switchMode}`;
+    const isActiveChat = this.getPreferredId() === account.id;
+    item.iconPath = isActiveChat
+      ? new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.green'))
+      : STATUS_ICONS[account.status];
+    item.description = `${isActiveChat ? '★ chat · ' : ''}prio ${account.priority} · ${account.switchMode}`;
+    item.tooltip = isActiveChat
+      ? `${account.label} — el chat usa esta API. Clic en otra para cambiar.`
+      : `${account.label} — clic para que el chat use esta API.`;
     item.id = account.id;
+    // Clicking the account makes the chat use its API.
+    item.command = {
+      command: 'keyRotator.setChatAccount',
+      title: 'Usar esta API en el chat',
+      arguments: [{ account }],
+    };
     return item;
   }
 

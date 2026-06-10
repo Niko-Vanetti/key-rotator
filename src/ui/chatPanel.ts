@@ -6,6 +6,7 @@ interface IncomingMessage {
   type: string;
   text?: string;
   id?: string;
+  value?: string;
 }
 
 /**
@@ -42,6 +43,14 @@ export class ChatPanel {
     ChatPanel.current = new ChatPanel(extensionUri, backend, activeAccountLabel);
   }
 
+  /** Re-push account/session state to the open panel (e.g. after a switch). */
+  static refreshIfOpen(): void {
+    const c = ChatPanel.current;
+    if (!c) return;
+    c.post({ type: 'meta', activeAccount: c.activeAccountLabel(), sessionId: c.session.currentSessionId });
+    c.postSessions();
+  }
+
   private post(msg: Record<string, unknown>): void {
     void this.panel.webview.postMessage(msg);
   }
@@ -53,10 +62,31 @@ export class ChatPanel {
 
   private async handleMessage(msg: IncomingMessage): Promise<void> {
     switch (msg.type) {
-      case 'ready':
+      case 'ready': {
+        const cfg = vscode.workspace.getConfiguration('keyRotator');
+        const model = cfg.get<string>('chatModel', '').trim();
+        const effort = cfg.get<string>('chatEffort', '').trim();
+        this.session.setModel(model || null);
+        this.session.setEffort(effort || null);
         this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
+        this.post({ type: 'config', model, effort });
         this.postSessions();
         break;
+      }
+
+      case 'setModel': {
+        const v = (msg.value ?? '').trim();
+        this.session.setModel(v || null);
+        await vscode.workspace.getConfiguration('keyRotator').update('chatModel', v, vscode.ConfigurationTarget.Global);
+        break;
+      }
+
+      case 'setEffort': {
+        const v = (msg.value ?? '').trim();
+        this.session.setEffort(v || null);
+        await vscode.workspace.getConfiguration('keyRotator').update('chatEffort', v, vscode.ConfigurationTarget.Global);
+        break;
+      }
 
       case 'refreshSessions':
         this.postSessions();
@@ -87,6 +117,7 @@ export class ChatPanel {
             this.post({ type: 'meta', activeAccount: label, sessionId: this.session.currentSessionId });
           },
           onInfo: (t) => this.post({ type: 'info', text: t }),
+          onModel: (m) => this.post({ type: 'model', model: m }),
           onError: (t) => this.post({ type: 'turnError', text: t }),
           onDone: (full) => {
             this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId });

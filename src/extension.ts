@@ -22,7 +22,10 @@ export function activate(context: vscode.ExtensionContext) {
   const keyManager = new KeyManager(context);
   const registry = new RegistryUpdater(context);
   const statusBar = new StatusBarManager();
-  const treeProvider = new AccountsTreeProvider(() => keyManager.getAllMeta());
+  const treeProvider = new AccountsTreeProvider(
+    () => keyManager.getAllMeta(),
+    () => context.globalState.get<string>('keyRotator.preferredChatAccount')
+  );
 
   vscode.window.registerTreeDataProvider('keyRotatorAccounts', treeProvider);
   context.subscriptions.push(statusBar);
@@ -203,11 +206,23 @@ export function activate(context: vscode.ExtensionContext) {
     return dir;
   };
 
-  const sortedActiveAnthropic = (): AccountMeta[] =>
-    keyManager
+  const PREFERRED_KEY = 'keyRotator.preferredChatAccount';
+  const getPreferredId = (): string | undefined => context.globalState.get<string>(PREFERRED_KEY);
+  const setPreferredId = (id: string | undefined) => context.globalState.update(PREFERRED_KEY, id);
+
+  const sortedActiveAnthropic = (): AccountMeta[] => {
+    const list = keyManager
       .getAllMeta()
       .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
       .sort((a, b) => a.priority - b.priority);
+    // Float the user-selected account to the front, if it's still active.
+    const pref = getPreferredId();
+    if (pref) {
+      const i = list.findIndex((a) => a.id === pref);
+      if (i > 0) list.unshift(list.splice(i, 1)[0]);
+    }
+    return list;
+  };
 
   /** Resolve the account/credential the next turn should use. */
   async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
@@ -287,6 +302,10 @@ export function activate(context: vscode.ExtensionContext) {
       const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatModel', '').trim();
       return m || undefined;
     },
+    getEffort: () => {
+      const e = vscode.workspace.getConfiguration('keyRotator').get<string>('chatEffort', '').trim();
+      return e || undefined;
+    },
     getCwd: () => {
       // Prefer the open workspace folder so the chat inherits project-level
       // context (CLAUDE.md, project MCPs, skills). Fall back to an isolated
@@ -342,6 +361,29 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('keyRotator.openChat', () => {
       ChatPanel.createOrShow(context.extensionUri, chatBackend, activeChatAccountLabel);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.setChatAccount', async (node?: { account?: AccountMeta }) => {
+      // Clicking an account in the tree makes the chat use its API.
+      let id = node?.account?.id;
+      if (!id) {
+        const accounts = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
+        const picked = await vscode.window.showQuickPick(
+          accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
+          { placeHolder: '¿Qué API usar en el chat?' }
+        );
+        id = picked?.id;
+      }
+      if (!id) return;
+      const acc = keyManager.getAllMeta().find((a) => a.id === id);
+      // Make sure the chosen account is usable (not disabled).
+      if (acc && acc.status === 'disabled') {
+        await keyManager.updateAccountMeta(id, { status: 'active' });
+      }
+      await setPreferredId(id);
+      refreshUI();
+      ChatPanel.refreshIfOpen();
+      vscode.window.showInformationMessage(`KeyRotator: el chat ahora usa "${acc?.label ?? id}".`);
     }),
 
     vscode.commands.registerCommand('keyRotator.loginProfile', async () => {
