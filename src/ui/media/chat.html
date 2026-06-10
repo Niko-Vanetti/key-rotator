@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}};" />
+  <link rel="stylesheet" href="{{styleUri}}" />
+  <title>KeyRotator Chat</title>
+</head>
+<body>
+  <header class="chat-header">
+    <div class="title">
+      <span class="dot"></span>
+      <span>KeyRotator Chat</span>
+    </div>
+    <div class="header-meta">
+      <span id="activeAccount" class="badge">—</span>
+      <button id="resetBtn" class="ghost" title="Nueva conversación">＋ Nuevo</button>
+    </div>
+  </header>
+
+  <main id="messages" class="messages">
+    <div class="welcome">
+      <h3>Chat con failover automático</h3>
+      <p>Escribe abajo. Si la cuenta activa llega a su límite, KeyRotator cambia a la siguiente cuenta y continúa la misma conversación sin que pierdas el hilo.</p>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <textarea id="input" placeholder="Escribe un mensaje…  (Enter para enviar, Shift+Enter para salto de línea)" rows="1"></textarea>
+    <button id="sendBtn" title="Enviar">Enviar</button>
+  </footer>
+
+  <script src="{{scriptUri}}"></script>
+</body>
+</html>

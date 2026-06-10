@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { Account, AccountMeta, HistoryEntry } from './types.js';
 import { KeyManager } from './storage/keyManager.js';
@@ -10,8 +11,11 @@ import { startHealthCheckLoop } from './monitor/rateLimitMonitor.js';
 import { StatusBarManager } from './ui/statusBar.js';
 import { AccountsTreeProvider } from './ui/accountsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
+import { ChatPanel } from './ui/chatPanel.js';
+import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
 
 const HISTORY_KEY = 'keyRotator.history';
+const CHAT_PROVIDER = 'anthropic';
 
 export function activate(context: vscode.ExtensionContext) {
   const keyManager = new KeyManager(context);
@@ -179,11 +183,97 @@ export function activate(context: vscode.ExtensionContext) {
     generateId: () => randomUUID(),
   };
 
+  // --- chat backend ------------------------------------------------------
+
+  /** Resolve the highest-priority active Anthropic account, with its key. */
+  async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
+    const candidates = keyManager
+      .getAllMeta()
+      .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
+      .sort((a, b) => a.priority - b.priority);
+    const meta = candidates[0];
+    if (!meta) return null;
+    const apiKey = await keyManager.getApiKey(meta.id);
+    if (!apiKey) return null;
+    return { id: meta.id, label: meta.label, apiKey };
+  }
+
+  /** Mark `accountId` rate-limited, rotate, and return the next account+key. */
+  async function rotateChatFrom(accountId: string): Promise<ActiveAccount | null> {
+    const accounts = keyManager.getAllMeta();
+    const from = accounts.find((a) => a.id === accountId);
+    await keyManager.updateAccountMeta(accountId, { status: 'rate-limited' });
+
+    const next = pickNextAccount(applyRateLimit(accounts, accountId), CHAT_PROVIDER, accountId);
+    if (!next) {
+      refreshUI();
+      return null;
+    }
+
+    const full = await keyManager.getAccountWithKey(next.id);
+    if (!full) {
+      refreshUI();
+      return null;
+    }
+
+    await applyEnvVar(full);
+    await setHistory(
+      addHistoryEntry(getHistory(), {
+        timestamp: Date.now(),
+        fromAccountId: accountId,
+        fromLabel: from?.label ?? null,
+        toAccountId: next.id,
+        toLabel: next.label,
+        provider: CHAT_PROVIDER,
+        reason: 'rate-limit',
+      })
+    );
+    refreshUI();
+    return { id: next.id, label: next.label, apiKey: full.apiKey };
+  }
+
+  const chatBackend: ChatBackend = {
+    resolveActiveAccount: resolveActiveChatAccount,
+    rotateFrom: rotateChatFrom,
+    getModel: () => {
+      const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatModel', '').trim();
+      return m || undefined;
+    },
+    getCwd: () => {
+      const dir = vscode.Uri.joinPath(context.globalStorageUri, 'chat-sessions');
+      try {
+        fs.mkdirSync(dir.fsPath, { recursive: true });
+      } catch {
+        // best-effort; claude will still run from this path
+      }
+      return dir.fsPath;
+    },
+    getLauncher: () => ({
+      // On Windows `claude` is a .cmd shim — resolve it via the shell. On
+      // POSIX, spawning through the shell also resolves it from PATH.
+      command: 'claude',
+      baseArgs: ['--bare'],
+      useShell: true,
+    }),
+  };
+
+  const activeChatAccountLabel = (): string => {
+    const candidates = keyManager
+      .getAllMeta()
+      .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
+      .sort((a, b) => a.priority - b.priority);
+    return candidates[0]?.label ?? 'Sin cuenta activa';
+  };
+
   // --- commands ----------------------------------------------------------
 
   context.subscriptions.push(
     vscode.commands.registerCommand('keyRotator.openDashboard', () => {
       DashboardPanel.createOrShow(context.extensionUri, dashboardCallbacks);
+    }),
+
+    vscode.commands.registerCommand('keyRotator.openChat', () => {
+      ChatPanel.createOrShow(context.extensionUri, chatBackend, activeChatAccountLabel);
     }),
 
     vscode.commands.registerCommand('keyRotator.addAccount', () => {

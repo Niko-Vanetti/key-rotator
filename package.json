@@ -28,13 +28,15 @@
       { "command": "keyRotator.activateAccount", "title": "KeyRotator: Activate Account", "icon": "$(check)" },
       { "command": "keyRotator.disableAccount", "title": "KeyRotator: Disable Account", "icon": "$(circle-slash)" },
       { "command": "keyRotator.openDashboard", "title": "KeyRotator: Open Dashboard", "icon": "$(dashboard)" },
+      { "command": "keyRotator.openChat", "title": "KeyRotator: Open Chat", "icon": "$(comment-discussion)" },
       { "command": "keyRotator.reportRateLimit", "title": "KeyRotator: Report Rate Limit on Active Account" },
       { "command": "keyRotator.rotateNow", "title": "KeyRotator: Rotate Now" }
     ],
     "menus": {
       "view/title": [
-        { "command": "keyRotator.addAccount", "when": "view == keyRotatorAccounts", "group": "navigation" },
-        { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation" }
+        { "command": "keyRotator.openChat", "when": "view == keyRotatorAccounts", "group": "navigation@0" },
+        { "command": "keyRotator.addAccount", "when": "view == keyRotatorAccounts", "group": "navigation@1" },
+        { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation@2" }
       ],
       "view/item/context": [
         { "command": "keyRotator.activateAccount", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline" },
@@ -60,6 +62,11 @@
           "type": "boolean",
           "default": true,
           "description": "When the highest-priority account recovers from a rate limit, automatically rotate back to it."
+        },
+        "keyRotator.chatModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: model alias or id for the KeyRotator Chat (e.g. 'opus', 'sonnet', or 'claude-opus-4-8'). Leave empty to use the Claude CLI default."
         }
       }
     }
@@ -68,7 +75,7 @@
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts"
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
