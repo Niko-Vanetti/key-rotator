@@ -185,8 +185,18 @@ export function activate(context: vscode.ExtensionContext) {
 
   // --- chat backend ------------------------------------------------------
 
-  /** Resolve the highest-priority active Anthropic account, with its key. */
+  const getChatMode = (): 'full' | 'failover' =>
+    vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'full') === 'failover'
+      ? 'failover'
+      : 'full';
+
+  /** Resolve the account/credential the next turn should use. */
   async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
+    // Full mode: use the logged-in Claude (OAuth/subscription) with full
+    // MCPs/skills — no API key, no per-account rotation.
+    if (getChatMode() === 'full') {
+      return { id: 'login', label: 'Claude (tu login)', useLogin: true };
+    }
     const candidates = keyManager
       .getAllMeta()
       .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
@@ -200,6 +210,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   /** Mark `accountId` rate-limited, rotate, and return the next account+key. */
   async function rotateChatFrom(accountId: string): Promise<ActiveAccount | null> {
+    // No cross-account rotation in full (login) mode — OAuth can't hot-swap.
+    if (getChatMode() === 'full') return null;
     const accounts = keyManager.getAllMeta();
     const from = accounts.find((a) => a.id === accountId);
     await keyManager.updateAccountMeta(accountId, { status: 'rate-limited' });
@@ -240,6 +252,11 @@ export function activate(context: vscode.ExtensionContext) {
       return m || undefined;
     },
     getCwd: () => {
+      // Prefer the open workspace folder so the chat inherits project-level
+      // context (CLAUDE.md, project MCPs, skills). Fall back to an isolated
+      // dir under globalStorage when no folder is open.
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (folder) return folder.uri.fsPath;
       const dir = vscode.Uri.joinPath(context.globalStorageUri, 'chat-sessions');
       try {
         fs.mkdirSync(dir.fsPath, { recursive: true });
@@ -251,13 +268,16 @@ export function activate(context: vscode.ExtensionContext) {
     getLauncher: () => ({
       // On Windows `claude` is a .cmd shim — resolve it via the shell. On
       // POSIX, spawning through the shell also resolves it from PATH.
+      // `--bare` (failover mode) forces ANTHROPIC_API_KEY auth but disables
+      // MCPs/hooks; full mode omits it to inherit the user's full Claude env.
       command: 'claude',
-      baseArgs: ['--bare'],
+      baseArgs: getChatMode() === 'failover' ? ['--bare'] : [],
       useShell: true,
     }),
   };
 
   const activeChatAccountLabel = (): string => {
+    if (getChatMode() === 'full') return 'Claude (tu login)';
     const candidates = keyManager
       .getAllMeta()
       .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')

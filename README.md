@@ -46,33 +46,50 @@ code --install-extension key-rotator-0.1.0.vsix
 
 ## Chat con failover
 
-El **Chat** te deja conversar con Claude dentro de VS Code mientras KeyRotator gestiona
-las cuentas por debajo. A diferencia de una sesión de Claude Code autenticada por OAuth
-(que no se puede cambiar de cuenta a mitad de sesión), este chat lanza el CLI `claude` en
-modo API key (`--bare`), un proceso por turno, y mantiene la continuidad con `--resume`.
+El **Chat** te deja conversar con Claude dentro de VS Code lanzando el CLI `claude` por
+debajo (un proceso por turno, continuidad con `--resume`). Tiene **dos modos**
+(`keyRotator.chatMode`):
 
-Cómo funciona:
+### Modo `full` (por defecto) — todas las funciones de Claude
+
+Usa tu **login de Claude** (suscripción Pro/Max vía OAuth), igual que Claude Code normal:
+hereda **todos los MCPs, Skills, hooks y el `CLAUDE.md`** del proyecto abierto. Es una
+sola cuenta (OAuth no se puede cambiar por invocación), así que **no hay rotación
+multi-cuenta** en este modo. Ideal si lo que querés es un Claude completo dentro de un
+panel de VS Code usando tu suscripción.
+
+### Modo `failover` — rotación multi-cuenta por API key
+
+Lanza `claude --bare`, que fuerza autenticación por `ANTHROPIC_API_KEY`. Usa la cuenta de
+Anthropic **activa de mayor prioridad** y, cuando llega a su límite de uso **o se queda
+sin saldo de API**, KeyRotator:
+
+- la marca como agotada y rota a la siguiente cuenta activa (motor de rotación existente),
+- relanza el **mismo turno** con `claude --resume <session-id>` y la nueva `ANTHROPIC_API_KEY`,
+- muestra un aviso "↻ Cambiando a <cuenta>" y **continúa la misma conversación**.
+
+> ⚠ `--bare` **desactiva los MCPs y hooks** (es el precio de forzar la auth por API key).
+> Además, cada cuenta necesita una **API key real de la Consola de Anthropic con saldo**
+> (pay-as-you-go) — tu suscripción Pro/Max **no** cubre llamadas con API key cruda; si la
+> key no tiene crédito verás "Credit balance is too low" y KeyRotator rotará buscando una
+> que sí tenga.
+
+### Uso
 
 1. Abrí el chat con el botón 💬 en la barra de la vista KeyRotator o el comando
    **"KeyRotator: Open Chat"**.
-2. Escribí normalmente. El chat usa la cuenta de Anthropic **activa de mayor prioridad**.
-3. Cuando esa cuenta llega a su límite de uso **o se queda sin saldo**, KeyRotator:
-   - la marca como agotada y rota a la siguiente cuenta activa (motor de rotación existente),
-   - relanza el **mismo turno** con `claude --resume <session-id>` y la nueva `ANTHROPIC_API_KEY`,
-   - mostrá un aviso "↻ Cambiando a <cuenta>" y **continúa la misma conversación**.
-4. El badge del encabezado muestra qué cuenta está activa. El botón "＋ Nuevo" inicia
-   una conversación limpia.
+2. Elegí el modo en Settings → `keyRotator.chatMode` (`full` o `failover`).
+3. Escribí normalmente. El badge del encabezado muestra qué credencial está activa; el
+   botón "＋ Nuevo" inicia una conversación limpia.
 
-Requisitos:
+Requisitos: el CLI `claude` instalado y en el `PATH` (el mismo Claude Code).
 
-- Tené el CLI `claude` instalado y en el `PATH` (el mismo Claude Code).
-- Cada cuenta de Anthropic debe tener una **API key real de la Consola** con saldo/cuota
-  disponible (no basta el login OAuth de claude.ai).
-
-> Nota: el chat es una superficie **separada** de esta misma conversación de Claude Code
-> en el panel de VS Code. No "continúa" una sesión OAuth ya abierta — eso es una
-> limitación de plataforma, no de KeyRotator. Lo que sí logra es darte una experiencia de
-> chat ininterrumpida que rueda entre tus cuentas cuando una se agota.
+> Nota de plataforma: por qué no se pueden tener **las dos cosas a la vez** (MCPs +
+> rotación multi-cuenta). Forzar la API key requiere `--bare`, que apaga los MCPs; sin
+> `--bare`, Claude usa tu login OAuth (una sola cuenta) y no se puede cambiar de cuenta a
+> mitad de sesión. El chat tampoco "continúa" la sesión de Claude Code que ya tenés
+> abierta en el panel — es una superficie separada. Son límites de la plataforma de
+> Claude Code, no de KeyRotator.
 
 ## Configuración
 
@@ -82,6 +99,7 @@ Requisitos:
 | `keyRotator.geminiApiKey` | `""` | API key de Gemini para identificación de proveedores desconocidos (opcional) |
 | `keyRotator.preferPrimary` | `true` | Volver a la cuenta de mayor prioridad cuando se recupera |
 | `keyRotator.chatModel` | `""` | Modelo para el Chat (`opus`, `sonnet`, o un id completo). Vacío = default del CLI |
+| `keyRotator.chatMode` | `"full"` | `full` = login/suscripción con todos los MCPs/Skills. `failover` = rotación multi-cuenta por API key (`--bare`, sin MCPs) |
 
 ## Seguridad
 

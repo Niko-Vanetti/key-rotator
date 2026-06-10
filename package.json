@@ -67,6 +67,16 @@
           "type": "string",
           "default": "",
           "description": "Optional: model alias or id for the KeyRotator Chat (e.g. 'opus', 'sonnet', or 'claude-opus-4-8'). Leave empty to use the Claude CLI default."
+        },
+        "keyRotator.chatMode": {
+          "type": "string",
+          "enum": ["full", "failover"],
+          "enumDescriptions": [
+            "Full: usa tu login de Claude (suscripción) con todos los MCPs, Skills, hooks y CLAUDE.md. Una sola cuenta, sin rotación.",
+            "Failover: usa las API keys de tus cuentas y rota entre ellas al agotarse (requiere saldo de API). Sin MCPs (modo --bare)."
+          ],
+          "default": "full",
+          "description": "Cómo autentica el KeyRotator Chat. 'full' = tu login/suscripción con todas las funciones de Claude. 'failover' = rotación multi-cuenta por API key."
         }
       }
     }

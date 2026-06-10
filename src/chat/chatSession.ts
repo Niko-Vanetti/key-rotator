@@ -10,7 +10,13 @@ import {
 export interface ActiveAccount {
   id: string;
   label: string;
-  apiKey: string;
+  /** API key for `failover` mode. Omitted/empty in `full` (login) mode. */
+  apiKey?: string;
+  /**
+   * When true the turn runs against the user's logged-in Claude (OAuth /
+   * subscription) with full MCPs/skills — no API key is injected.
+   */
+  useLogin?: boolean;
 }
 
 /**
@@ -98,9 +104,15 @@ export class ChatSession {
         // outcome.kind === 'rateLimit' → rotate and retry the same turn.
         const next = await this.backend.rotateFrom(account.id);
         if (!next) {
-          handlers.onError(
-            `Se agotaron todas las cuentas disponibles. Última: ${account.label}. Intenta más tarde o agrega otra cuenta.`
-          );
+          if (account.useLogin) {
+            handlers.onError(
+              `Tu cuenta de Claude (${account.label}) llegó a su límite de uso. Espera a que se reinicie, o cambia "keyRotator.chatMode" a "failover" para rotar entre cuentas con API key.`
+            );
+          } else {
+            handlers.onError(
+              `Se agotaron todas las cuentas con API key disponibles. Última: ${account.label}. Revisa que tengan saldo de API (consola de Anthropic) o agrega otra cuenta.`
+            );
+          }
           return;
         }
         handlers.onAccountSwitch(next.label, 'límite alcanzado');
@@ -130,12 +142,22 @@ export class ChatSession {
         args.push('--model', model);
       }
 
+      // In login (full) mode, run against the user's OAuth subscription with
+      // full MCPs/skills — strip any inherited API key so it isn't used. In
+      // failover mode, inject the active account's API key for billing.
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      if (account.useLogin || !account.apiKey) {
+        delete env.ANTHROPIC_API_KEY;
+      } else {
+        env.ANTHROPIC_API_KEY = account.apiKey;
+      }
+
       let child: ChildProcessWithoutNullStreams;
       try {
         child = spawn(command, args, {
           cwd: this.backend.getCwd(),
           shell: useShell,
-          env: { ...process.env, ANTHROPIC_API_KEY: account.apiKey },
+          env,
         });
       } catch (err) {
         resolve({ kind: 'error', message: `No se pudo iniciar claude: ${(err as Error).message}` });
