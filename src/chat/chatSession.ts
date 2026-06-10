@@ -68,6 +68,8 @@ export interface TurnHandlers {
   onDone(fullText: string): void;
   /** Reports the actual model claude reported using (from the init event). */
   onModel(model: string): void;
+  /** Optional: usage/limit info from rate_limit_event (resetsAt, status…). */
+  onUsage?(info: Record<string, unknown>): void;
 }
 
 const MAX_FAILOVERS = 8;
@@ -290,6 +292,7 @@ export class ChatSession {
               break;
             case 'rateLimit':
               if (isRateLimitBlock(ev.info)) rateLimited = true;
+              handlers.onUsage?.(ev.info);
               break;
             case 'result':
               if (ev.sessionId) this.sessionId = ev.sessionId;

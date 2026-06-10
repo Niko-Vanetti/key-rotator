@@ -19,6 +19,9 @@ import { listNamedSessions, loadSession, listSlashCommands } from './chat/sessio
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
 
+// Per-account model list cache (Models API results change rarely).
+const modelsCache = new Map<string, { at: number; models: { id: string; label: string }[] }>();
+
 export function activate(context: vscode.ExtensionContext) {
   const keyManager = new KeyManager(context);
   const registry = new RegistryUpdater(context);
@@ -353,7 +356,8 @@ export function activate(context: vscode.ExtensionContext) {
     getSlashCommands: () => listSlashCommands(),
     listModels: async () => {
       // GitHub-Copilot-style: detect the models the active key can use via the
-      // Anthropic Models API. Falls back to a known set on error / no key.
+      // Anthropic Models API. Cached per account (15 min) so opening the chat
+      // doesn't wait on the network every time.
       const fallback = [
         { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
         { id: 'claude-fable-5', label: 'Claude Fable 5' },
@@ -362,6 +366,8 @@ export function activate(context: vscode.ExtensionContext) {
       ];
       const meta = sortedActiveAnthropic()[0];
       if (!meta) return fallback;
+      const cached = modelsCache.get(meta.id);
+      if (cached && Date.now() - cached.at < 15 * 60_000) return cached.models;
       const key = await keyManager.getApiKey(meta.id);
       if (!key) return fallback;
       try {
@@ -371,7 +377,9 @@ export function activate(context: vscode.ExtensionContext) {
         });
         const json = (await res.json()) as { data?: { id: string; display_name?: string }[] };
         if (Array.isArray(json.data) && json.data.length > 0) {
-          return json.data.map((m) => ({ id: m.id, label: m.display_name || m.id }));
+          const models = json.data.map((m) => ({ id: m.id, label: m.display_name || m.id }));
+          modelsCache.set(meta.id, { at: Date.now(), models });
+          return models;
         }
       } catch {
         // network / auth error — fall back

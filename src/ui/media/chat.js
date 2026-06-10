@@ -197,6 +197,20 @@
         break;
       case 'title': chatTitleEl.textContent = msg.title || 'Nueva conversación'; break;
       case 'model': if (msg.model) activeModelEl.textContent = msg.model; break;
+      case 'usage': {
+        // Show when the usage limit resets (from claude's rate_limit_event).
+        const usageBadge = document.getElementById('usageBadge');
+        const resetsAt = msg.info && msg.info.resetsAt;
+        if (usageBadge && typeof resetsAt === 'number') {
+          const remMs = resetsAt * 1000 - Date.now();
+          if (remMs > 0) {
+            const h = Math.floor(remMs / 3600000), m = Math.ceil((remMs % 3600000) / 60000);
+            usageBadge.textContent = 'límite resetea en ' + (h > 0 ? h + 'h ' : '') + m + 'm';
+            usageBadge.classList.remove('hidden');
+          }
+        }
+        break;
+      }
       case 'insert': inputEl.value += (msg.text || ''); autoGrow(); inputEl.focus(); break;
       case 'delta': if (streamingEl) { streamingRaw += msg.text; streamingEl.textContent = streamingRaw; scrollToBottom(); } break;
       case 'switch':

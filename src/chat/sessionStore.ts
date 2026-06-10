@@ -93,6 +93,9 @@ export function parseHistory(lines: string[]): ChatMessage[] {
   const seen = new Set<string>();
   const out: ChatMessage[] = [];
   for (const l of lines) {
+    // Cheap string pre-filter: skip tool results / attachments / system lines
+    // without paying JSON.parse for them (transcripts can be huge).
+    if (!l.includes('"type":"user"') && !l.includes('"type":"assistant"')) continue;
     let o: any;
     try {
       o = JSON.parse(l);
@@ -120,6 +123,46 @@ function readLines(filePath: string): string[] {
   return fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
 }
 
+// mtime-keyed cache so repeated listings don't re-read unchanged transcripts
+// (some are several MB — full per-line JSON.parse on every refresh was slow).
+interface ScanEntry {
+  mtime: number;
+  name: string | null;
+  cwd: string;
+}
+const scanCache = new Map<string, ScanEntry>();
+
+/**
+ * Fast metadata scan: finds the LATEST custom-title line via lastIndexOf and
+ * the first cwd via regex, parsing at most one JSON line instead of all.
+ */
+function quickScan(filePath: string): { name: string | null; cwd: string } {
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return { name: null, cwd: '' };
+  }
+  let name: string | null = null;
+  const idx = content.lastIndexOf('"custom-title"');
+  if (idx !== -1) {
+    const start = content.lastIndexOf('\n', idx) + 1;
+    let end = content.indexOf('\n', idx);
+    if (end === -1) end = content.length;
+    name = parseCustomTitle([content.slice(start, end).trim()]);
+  }
+  let cwd = '';
+  const m = content.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+  if (m) {
+    try {
+      cwd = JSON.parse('"' + m[1] + '"');
+    } catch {
+      /* malformed escape — leave empty */
+    }
+  }
+  return { name, cwd };
+}
+
 /** List sessions that have a custom title (the named ones), newest first. */
 export function listNamedSessions(projectsRoot = defaultProjectsRoot()): SessionSummary[] {
   const out: SessionSummary[] = [];
@@ -141,23 +184,19 @@ export function listNamedSessions(projectsRoot = defaultProjectsRoot()): Session
     for (const f of files) {
       if (!f.endsWith('.jsonl')) continue;
       const filePath = path.join(dirPath, f);
-      let lines: string[];
       let mtime: number;
       try {
         mtime = fs.statSync(filePath).mtimeMs;
-        lines = readLines(filePath);
       } catch {
         continue;
       }
-      const name = parseCustomTitle(lines);
-      if (!name) continue; // only named sessions
-      out.push({
-        id: path.basename(f, '.jsonl'),
-        name,
-        cwd: parseCwd(lines) ?? '',
-        mtime,
-        filePath,
-      });
+      let entry = scanCache.get(filePath);
+      if (!entry || entry.mtime !== mtime) {
+        entry = { mtime, ...quickScan(filePath) };
+        scanCache.set(filePath, entry);
+      }
+      if (!entry.name) continue; // only named sessions
+      out.push({ id: path.basename(f, '.jsonl'), name: entry.name, cwd: entry.cwd, mtime, filePath });
     }
   }
   out.sort((a, b) => b.mtime - a.mtime);

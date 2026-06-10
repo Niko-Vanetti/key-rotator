@@ -169,6 +169,7 @@ export class ChatPanel {
           },
           onInfo: (t) => this.post({ type: 'info', text: t }),
           onModel: (m) => this.post({ type: 'model', model: m }),
+          onUsage: (info) => this.post({ type: 'usage', info }),
           onError: (t) => this.post({ type: 'turnError', text: t }),
           onDone: (full) => this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId }),
         });
