@@ -2,6 +2,7 @@
 src/**
 !src/ui/media/**
 test/**
+scripts/**
 docs/**
 out/**
 node_modules/**
