@@ -1,0 +1,11 @@
+[
+  { "prefix": "sk-ant-", "provider": "anthropic", "displayName": "Anthropic / Claude", "envVar": "ANTHROPIC_API_KEY", "docsUrl": "https://docs.anthropic.com" },
+  { "prefix": "AIza", "provider": "google-gemini", "displayName": "Google Gemini", "envVar": "GEMINI_API_KEY", "docsUrl": "https://ai.google.dev" },
+  { "prefix": "hf_", "provider": "huggingface", "displayName": "HuggingFace", "envVar": "HF_TOKEN", "docsUrl": "https://huggingface.co/docs" },
+  { "prefix": "gsk_", "provider": "groq", "displayName": "Groq", "envVar": "GROQ_API_KEY", "docsUrl": "https://console.groq.com/docs" },
+  { "prefix": "r8_", "provider": "replicate", "displayName": "Replicate", "envVar": "REPLICATE_API_TOKEN", "docsUrl": "https://replicate.com/docs" },
+  { "prefix": "co_", "provider": "cohere", "displayName": "Cohere", "envVar": "COHERE_API_KEY", "docsUrl": "https://docs.cohere.com" },
+  { "prefix": "together_", "provider": "together-ai", "displayName": "Together AI", "envVar": "TOGETHER_API_KEY", "docsUrl": "https://docs.together.ai" },
+  { "prefix": "sk-or-", "provider": "openrouter", "displayName": "OpenRouter", "envVar": "OPENROUTER_API_KEY", "docsUrl": "https://openrouter.ai/docs" },
+  { "prefix": "sk-", "provider": "openai", "displayName": "OpenAI", "envVar": "OPENAI_API_KEY", "docsUrl": "https://platform.openai.com/docs" }
+]

@@ -1,0 +1,81 @@
+{
+  "name": "key-rotator",
+  "displayName": "KeyRotator",
+  "description": "Manage and auto-rotate AI provider API keys (Claude, OpenAI, Gemini, Ollama, and more) on rate limits.",
+  "version": "0.1.0",
+  "publisher": "niko-local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "keyRotator", "title": "KeyRotator", "icon": "$(key)" }
+      ]
+    },
+    "views": {
+      "keyRotator": [
+        { "id": "keyRotatorAccounts", "name": "Accounts" }
+      ]
+    },
+    "commands": [
+      { "command": "keyRotator.addAccount", "title": "KeyRotator: Add Account", "icon": "$(add)" },
+      { "command": "keyRotator.editAccount", "title": "KeyRotator: Edit Account", "icon": "$(edit)" },
+      { "command": "keyRotator.deleteAccount", "title": "KeyRotator: Delete Account", "icon": "$(trash)" },
+      { "command": "keyRotator.activateAccount", "title": "KeyRotator: Activate Account", "icon": "$(check)" },
+      { "command": "keyRotator.disableAccount", "title": "KeyRotator: Disable Account", "icon": "$(circle-slash)" },
+      { "command": "keyRotator.openDashboard", "title": "KeyRotator: Open Dashboard", "icon": "$(dashboard)" },
+      { "command": "keyRotator.reportRateLimit", "title": "KeyRotator: Report Rate Limit on Active Account" },
+      { "command": "keyRotator.rotateNow", "title": "KeyRotator: Rotate Now" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "keyRotator.addAccount", "when": "view == keyRotatorAccounts", "group": "navigation" },
+        { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "keyRotator.activateAccount", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline" },
+        { "command": "keyRotator.editAccount", "when": "view == keyRotatorAccounts && viewItem == account" },
+        { "command": "keyRotator.disableAccount", "when": "view == keyRotatorAccounts && viewItem == account" },
+        { "command": "keyRotator.deleteAccount", "when": "view == keyRotatorAccounts && viewItem == account" }
+      ]
+    },
+    "configuration": {
+      "title": "KeyRotator",
+      "properties": {
+        "keyRotator.healthCheckIntervalMinutes": {
+          "type": "number",
+          "default": 5,
+          "description": "How often to ping providers to check for rate limits."
+        },
+        "keyRotator.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: Gemini API key used to identify unknown API key prefixes via AI."
+        },
+        "keyRotator.preferPrimary": {
+          "type": "boolean",
+          "default": true,
+          "description": "When the highest-priority account recovers from a rate limit, automatically rotate back to it."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc --noEmit && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.21.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^2.24.0"
+  }
+}
