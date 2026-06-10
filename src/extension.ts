@@ -13,6 +13,7 @@ import { AccountsTreeProvider } from './ui/accountsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
+import { listNamedSessions, loadSession } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -187,8 +188,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   type ChatMode = 'failover' | 'full' | 'profiles';
   const getChatMode = (): ChatMode => {
-    const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'profiles');
-    return m === 'failover' || m === 'full' ? m : 'profiles';
+    const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'failover');
+    return m === 'full' || m === 'profiles' ? m : 'failover';
   };
 
   /** Per-account CLAUDE_CONFIG_DIR (its own OAuth login) for `profiles` mode. */
@@ -323,6 +324,8 @@ export function activate(context: vscode.ExtensionContext) {
         useShell: true,
       };
     },
+    listSessions: () => listNamedSessions(),
+    loadHistory: (id: string) => loadSession(id),
   };
 
   const activeChatAccountLabel = (): string => {

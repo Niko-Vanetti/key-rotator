@@ -71,14 +71,14 @@
         },
         "keyRotator.chatMode": {
           "type": "string",
-          "enum": ["profiles", "failover", "full"],
+          "enum": ["failover", "full", "profiles"],
           "enumDescriptions": [
-            "Profiles (recomendado): cada cuenta tiene su propio login de Claude (CLAUDE_CONFIG_DIR aislado) → integraciones gestionadas de claude.ai (Canva, Drive, Gmail) + rotación multi-cuenta. Requiere iniciar sesión en cada cuenta una vez (comando 'KeyRotator: Log in Account (Chat)').",
-            "Failover: usa las API keys de tus cuentas y rota al agotarse. Requiere saldo de API. MCPs propios vía keyRotator.chatMcpConfig (sin las integraciones de claude.ai).",
-            "Full: tu login por defecto de Claude. Integraciones de claude.ai, una sola cuenta, sin rotación."
+            "Failover (recomendado para el navegador de sesiones): API keys de tus cuentas + rotación al agotarse. Comparte las sesiones con Claude Code nativo (mismo almacén local), así puedes continuar aquí un chat de allá y viceversa. Requiere saldo de API.",
+            "Full: tu login por defecto de Claude. Integraciones de claude.ai, una sola cuenta, sin rotación. También comparte sesiones con el Claude Code nativo.",
+            "Profiles: login aislado por cuenta (integraciones claude.ai + rotación). OJO: usa un almacén de sesiones separado, así que NO comparte sesiones con el Claude Code nativo."
           ],
-          "default": "profiles",
-          "description": "Cómo autentica el KeyRotator Chat. 'profiles' = login por cuenta (integraciones claude.ai + rotación). 'failover' = API key + rotación. 'full' = login único."
+          "default": "failover",
+          "description": "Cómo autentica el KeyRotator Chat. 'failover' = API key + rotación (comparte sesiones con el Claude Code nativo). 'full' = login único. 'profiles' = login por cuenta aislado (no comparte sesiones)."
         },
         "keyRotator.chatMcpConfig": {
           "type": "string",
@@ -98,7 +98,7 @@
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts"
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

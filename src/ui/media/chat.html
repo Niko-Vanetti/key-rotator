@@ -7,28 +7,42 @@
   <title>KeyRotator Chat</title>
 </head>
 <body>
-  <header class="chat-header">
-    <div class="title">
-      <span class="dot"></span>
-      <span>KeyRotator Chat</span>
-    </div>
-    <div class="header-meta">
-      <span id="activeAccount" class="badge">—</span>
-      <button id="resetBtn" class="ghost" title="Nueva conversación">＋ Nuevo</button>
-    </div>
-  </header>
+  <div class="layout">
+    <!-- Sessions sidebar (shares the same store as native Claude Code) -->
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <span class="brand">KEYROTATOR</span>
+      </div>
+      <button id="newSessionBtn" class="new-session">＋ New session</button>
+      <div class="search">
+        <input id="searchInput" placeholder="Search sessions…" />
+      </div>
+      <div id="sessionList" class="session-list"></div>
+    </aside>
 
-  <main id="messages" class="messages">
-    <div class="welcome">
-      <h3>Chat con failover automático</h3>
-      <p>Escribe abajo. Si la cuenta activa llega a su límite, KeyRotator cambia a la siguiente cuenta y continúa la misma conversación sin que pierdas el hilo.</p>
-    </div>
-  </main>
+    <!-- Chat area -->
+    <section class="chat">
+      <header class="chat-header">
+        <div class="title">
+          <span class="dot"></span>
+          <span id="chatTitle">Nueva conversación</span>
+        </div>
+        <span id="activeAccount" class="badge">—</span>
+      </header>
 
-  <footer class="composer">
-    <textarea id="input" placeholder="Escribe un mensaje…  (Enter para enviar, Shift+Enter para salto de línea)" rows="1"></textarea>
-    <button id="sendBtn" title="Enviar">Enviar</button>
-  </footer>
+      <main id="messages" class="messages">
+        <div class="welcome">
+          <h3>Chat con tus sesiones de Claude</h3>
+          <p>Elige una sesión de la izquierda para continuarla con tu API, o crea una nueva. Comparte los mismos chats que Claude Code: lo que sigas aquí lo ves allá, y viceversa.</p>
+        </div>
+      </main>
+
+      <footer class="composer">
+        <textarea id="input" placeholder="Escribe un mensaje…  (Enter envía, Shift+Enter salto de línea)" rows="1"></textarea>
+        <button id="sendBtn" title="Enviar">Enviar</button>
+      </footer>
+    </section>
+  </div>
 
   <script src="{{scriptUri}}"></script>
 </body>

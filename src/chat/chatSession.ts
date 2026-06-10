@@ -6,6 +6,7 @@ import {
   isRateLimitText,
   isNotLoggedIn,
 } from './streamParser.js';
+import type { SessionSummary, ChatMessage } from './sessionStore.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -40,10 +41,14 @@ export interface ChatBackend {
   rotateFrom(accountId: string): Promise<ActiveAccount | null>;
   /** Optional model alias / id to pass to `claude --model`. */
   getModel(): string | undefined;
-  /** Absolute cwd for the claude process (where sessions persist). */
+  /** Absolute cwd for the claude process (where new sessions persist). */
   getCwd(): string;
   /** How to launch claude — resolved executable + base args (platform-specific). */
   getLauncher(): { command: string; baseArgs: string[]; useShell: boolean };
+  /** Named sessions from the shared local store (for the sidebar). */
+  listSessions(): SessionSummary[];
+  /** Load one session's cwd + message thread for display. */
+  loadHistory(id: string): { cwd: string; messages: ChatMessage[] } | null;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */
@@ -65,6 +70,7 @@ const MAX_FAILOVERS = 8;
  */
 export class ChatSession {
   private sessionId: string | null = null;
+  private sessionCwd: string | null = null;
   private busy = false;
 
   constructor(private backend: ChatBackend) {}
@@ -80,6 +86,17 @@ export class ChatSession {
   /** Reset so the next message starts a brand-new claude session. */
   reset(): void {
     this.sessionId = null;
+    this.sessionCwd = null;
+  }
+
+  /**
+   * Point the chat at an existing Claude session (from the shared store) so the
+   * next message continues it via `--resume`, running in its original cwd so
+   * the transcript stays in the same project file the native app reads.
+   */
+  setActiveSession(id: string | null, cwd?: string | null): void {
+    this.sessionId = id;
+    this.sessionCwd = cwd && cwd.length > 0 ? cwd : null;
   }
 
   async sendMessage(text: string, handlers: TurnHandlers): Promise<void> {
@@ -184,7 +201,9 @@ export class ChatSession {
       let child: ChildProcessWithoutNullStreams;
       try {
         child = spawn(command, args, {
-          cwd: this.backend.getCwd(),
+          // Resume in the session's own cwd so the transcript is written to the
+          // same project file native Claude Code reads (mutual continuity).
+          cwd: this.sessionCwd || this.backend.getCwd(),
           shell: useShell,
           env,
         });

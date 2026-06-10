@@ -5,6 +5,7 @@ import { ChatSession, type ChatBackend } from '../chat/chatSession.js';
 interface IncomingMessage {
   type: string;
   text?: string;
+  id?: string;
 }
 
 /**
@@ -18,7 +19,7 @@ export class ChatPanel {
 
   private constructor(
     private extensionUri: vscode.Uri,
-    backend: ChatBackend,
+    private backend: ChatBackend,
     private activeAccountLabel: () => string
   ) {
     this.session = new ChatSession(backend);
@@ -45,10 +46,36 @@ export class ChatPanel {
     void this.panel.webview.postMessage(msg);
   }
 
+  private postSessions(): void {
+    const sessions = this.backend.listSessions().map((s) => ({ id: s.id, name: s.name, mtime: s.mtime }));
+    this.post({ type: 'sessions', sessions, activeId: this.session.currentSessionId });
+  }
+
   private async handleMessage(msg: IncomingMessage): Promise<void> {
     switch (msg.type) {
       case 'ready':
         this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
+        this.postSessions();
+        break;
+
+      case 'refreshSessions':
+        this.postSessions();
+        break;
+
+      case 'selectSession': {
+        if (!msg.id || this.session.isBusy()) return;
+        const loaded = this.backend.loadHistory(msg.id);
+        this.session.setActiveSession(msg.id, loaded?.cwd ?? null);
+        this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: msg.id });
+        this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: msg.id });
+        break;
+      }
+
+      case 'newSession':
+        if (this.session.isBusy()) return;
+        this.session.reset();
+        this.post({ type: 'history', messages: [], activeId: null });
+        this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: null });
         break;
       case 'send': {
         const text = (msg.text ?? '').trim();
@@ -61,15 +88,15 @@ export class ChatPanel {
           },
           onInfo: (t) => this.post({ type: 'info', text: t }),
           onError: (t) => this.post({ type: 'turnError', text: t }),
-          onDone: (full) => this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId }),
+          onDone: (full) => {
+            this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId });
+            // A new session may have just been created/updated in the shared
+            // store; refresh the sidebar so it reflects the latest state.
+            this.postSessions();
+          },
         });
         break;
       }
-      case 'reset':
-        this.session.reset();
-        this.post({ type: 'cleared' });
-        this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: null });
-        break;
     }
   }
 
