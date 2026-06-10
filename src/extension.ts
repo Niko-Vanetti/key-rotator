@@ -14,13 +14,20 @@ import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
-import { listNamedSessions, loadSession, listSlashCommands } from './chat/sessionStore.js';
+import { listNamedSessions, loadSession, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
 
 // Per-account model list cache (Models API results change rarely).
 const modelsCache = new Map<string, { at: number; models: { id: string; label: string }[] }>();
+
+const FALLBACK_MODELS = [
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { id: 'claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+];
 
 export function activate(context: vscode.ExtensionContext) {
   const keyManager = new KeyManager(context);
@@ -31,17 +38,28 @@ export function activate(context: vscode.ExtensionContext) {
     () => context.globalState.get<string>('keyRotator.preferredChatAccount')
   );
 
+  // Seed the transcript scan cache from the last run so the Chats view and
+  // panel open instantly even on a cold start (no re-reading MB of jsonl).
+  seedScanCache(context.globalState.get('keyRotator.scanCache', {}));
+
   const sessionsProvider = new SessionsTreeProvider(() => listNamedSessions());
 
   vscode.window.registerTreeDataProvider('keyRotatorAccounts', treeProvider);
   vscode.window.registerTreeDataProvider('keyRotatorChats', sessionsProvider);
   context.subscriptions.push(statusBar);
 
+  let persistTimer: NodeJS.Timeout | undefined;
+  const persistScanCache = () => {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => void context.globalState.update('keyRotator.scanCache', exportScanCache()), 2000);
+  };
+
   const refreshUI = () => {
     statusBar.update(keyManager.getAllMeta());
     treeProvider.refresh();
     sessionsProvider.refresh();
     DashboardPanel.refreshIfOpen();
+    persistScanCache();
   };
 
   const getHistory = (): HistoryEntry[] => context.globalState.get<HistoryEntry[]>(HISTORY_KEY, []);
@@ -233,7 +251,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   /** Resolve the account/credential the next turn should use. */
-  async function resolveActiveChatAccount(): Promise<ActiveAccount | null> {
+  async function resolveActiveChatAccount(preferredId?: string | null): Promise<ActiveAccount | null> {
     const mode = getChatMode();
 
     // Full mode: the user's default logged-in Claude — managed MCPs, single
@@ -242,7 +260,9 @@ export function activate(context: vscode.ExtensionContext) {
       return { id: 'login', label: 'Claude (tu login)', useLogin: true };
     }
 
-    const meta = sortedActiveAnthropic()[0];
+    const list = sortedActiveAnthropic();
+    // Per-panel choice wins while that account is still usable.
+    const meta = (preferredId ? list.find((a) => a.id === preferredId) : undefined) ?? list[0];
     if (!meta) return null;
 
     // Profiles mode: per-account OAuth login dir → managed MCPs + rotation.
@@ -354,22 +374,29 @@ export function activate(context: vscode.ExtensionContext) {
     listSessions: () => listNamedSessions(),
     loadHistory: (id: string) => loadSession(id),
     getSlashCommands: () => listSlashCommands(),
-    listModels: async () => {
-      // GitHub-Copilot-style: detect the models the active key can use via the
-      // Anthropic Models API. Cached per account (15 min) so opening the chat
-      // doesn't wait on the network every time.
-      const fallback = [
-        { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-        { id: 'claude-fable-5', label: 'Claude Fable 5' },
-        { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
-        { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-      ];
-      const meta = sortedActiveAnthropic()[0];
-      if (!meta) return fallback;
+    getCachedModels: (accountId?: string | null) => {
+      // Instant, sync: persisted cache from the last successful detection.
+      const list = sortedActiveAnthropic();
+      const meta = (accountId ? list.find((a) => a.id === accountId) : undefined) ?? list[0];
+      if (!meta) return FALLBACK_MODELS;
+      const mem = modelsCache.get(meta.id);
+      if (mem) return mem.models;
+      const persisted = context.globalState.get<Record<string, { id: string; label: string }[]>>(
+        'keyRotator.modelsByAccount',
+        {}
+      )[meta.id];
+      return persisted && persisted.length > 0 ? persisted : FALLBACK_MODELS;
+    },
+    listModels: async (accountId?: string | null) => {
+      // GitHub-Copilot-style detection via the Models API. Cached in memory
+      // (15 min) and persisted to globalState so the dropdown is instant.
+      const list = sortedActiveAnthropic();
+      const meta = (accountId ? list.find((a) => a.id === accountId) : undefined) ?? list[0];
+      if (!meta) return FALLBACK_MODELS;
       const cached = modelsCache.get(meta.id);
       if (cached && Date.now() - cached.at < 15 * 60_000) return cached.models;
       const key = await keyManager.getApiKey(meta.id);
-      if (!key) return fallback;
+      if (!key) return FALLBACK_MODELS;
       try {
         const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
@@ -379,12 +406,19 @@ export function activate(context: vscode.ExtensionContext) {
         if (Array.isArray(json.data) && json.data.length > 0) {
           const models = json.data.map((m) => ({ id: m.id, label: m.display_name || m.id }));
           modelsCache.set(meta.id, { at: Date.now(), models });
+          const all = context.globalState.get<Record<string, { id: string; label: string }[]>>(
+            'keyRotator.modelsByAccount',
+            {}
+          );
+          all[meta.id] = models;
+          void context.globalState.update('keyRotator.modelsByAccount', all);
           return models;
         }
       } catch {
         // network / auth error — fall back
       }
-      return fallback;
+      const prior = modelsCache.get(meta.id)?.models;
+      return prior && prior.length > 0 ? prior : FALLBACK_MODELS;
     },
     listChatAccounts: () => {
       const activeId = sortedActiveAnthropic()[0]?.id;
@@ -562,6 +596,14 @@ export function activate(context: vscode.ExtensionContext) {
   void registry.refreshFromRemote();
 
   refreshUI();
+
+  // Warm the scan cache in the background shortly after startup so any
+  // sessions changed while VS Code was closed get re-scanned and persisted.
+  setTimeout(() => {
+    listNamedSessions();
+    persistScanCache();
+    sessionsProvider.refresh();
+  }, 1500);
 }
 
 export function deactivate() {}

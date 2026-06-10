@@ -32,8 +32,12 @@ export interface ActiveAccount {
  * implemented in extension.ts. Keeps ChatSession free of vscode/storage deps.
  */
 export interface ChatBackend {
-  /** The account the chat should currently bill to, or null if none usable. */
-  resolveActiveAccount(): Promise<ActiveAccount | null>;
+  /**
+   * The account the chat should bill to, or null if none usable. When
+   * `preferredId` is given (per-panel account choice), that account is used
+   * if still usable; otherwise falls back to the best available.
+   */
+  resolveActiveAccount(preferredId?: string | null): Promise<ActiveAccount | null>;
   /**
    * Mark `accountId` rate-limited, rotate to the next eligible account, and
    * return it (or null if every account is exhausted).
@@ -55,8 +59,10 @@ export interface ChatBackend {
   getSlashCommands(): string[];
   /** Accounts available for the chat (for the account menu). */
   listChatAccounts(): { id: string; label: string; active: boolean }[];
-  /** Auto-detect the models the active account's API key can use. */
-  listModels(): Promise<{ id: string; label: string }[]>;
+  /** Cached model list for an account — sync and instant (may be fallback). */
+  getCachedModels(accountId?: string | null): { id: string; label: string }[];
+  /** Refresh the model list from the Models API (background, cached). */
+  listModels(accountId?: string | null): Promise<{ id: string; label: string }[]>;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */
@@ -85,9 +91,19 @@ export class ChatSession {
   private sessionCwd: string | null = null;
   private modelOverride: string | null = null;
   private effortOverride: string | null = null;
+  private accountOverride: string | null = null;
   private busy = false;
 
   constructor(private backend: ChatBackend) {}
+
+  /** Pin this chat to a specific account (per-panel autonomy). */
+  setAccount(id: string | null): void {
+    this.accountOverride = id;
+  }
+
+  get accountId(): string | null {
+    return this.accountOverride;
+  }
 
   /** Override the model for subsequent turns ('' / null → backend default). */
   setModel(model: string | null): void {
@@ -130,7 +146,7 @@ export class ChatSession {
     }
     this.busy = true;
     try {
-      let account = await this.backend.resolveActiveAccount();
+      let account = await this.backend.resolveActiveAccount(this.accountOverride);
       if (!account) {
         handlers.onError('No hay ninguna cuenta activa. Agrega una cuenta de Anthropic en KeyRotator.');
         return;

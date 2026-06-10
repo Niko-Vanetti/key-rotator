@@ -125,12 +125,24 @@ function readLines(filePath: string): string[] {
 
 // mtime-keyed cache so repeated listings don't re-read unchanged transcripts
 // (some are several MB — full per-line JSON.parse on every refresh was slow).
-interface ScanEntry {
+export interface ScanEntry {
   mtime: number;
   name: string | null;
   cwd: string;
 }
 const scanCache = new Map<string, ScanEntry>();
+
+/** Seed the scan cache from persisted state so cold starts are instant. */
+export function seedScanCache(entries: Record<string, ScanEntry>): void {
+  for (const [k, v] of Object.entries(entries || {})) {
+    if (!scanCache.has(k) && v && typeof v.mtime === 'number') scanCache.set(k, v);
+  }
+}
+
+/** Export the scan cache for persistence across extension restarts. */
+export function exportScanCache(): Record<string, ScanEntry> {
+  return Object.fromEntries(scanCache);
+}
 
 /**
  * Fast metadata scan: finds the LATEST custom-title line via lastIndexOf and

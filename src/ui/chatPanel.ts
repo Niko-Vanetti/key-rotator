@@ -10,13 +10,17 @@ interface IncomingMessage {
 }
 
 /**
- * Singleton WebView panel hosting the chat. Chat-only (sessions live in the
- * activity-bar tree); all process/rotation logic lives in ChatSession.
+ * Multi-instance WebView chat panel — one VS Code tab per conversation, like
+ * native Claude Code. Each panel owns its own ChatSession and can be pinned to
+ * a different account/API, so several chats can work in parallel on different
+ * programs with different keys.
  */
 export class ChatPanel {
-  private static current: ChatPanel | undefined;
+  private static panels = new Set<ChatPanel>();
   private panel: vscode.WebviewPanel;
   private session: ChatSession;
+  /** Per-panel account override (null = global preferred account). */
+  private accountId: string | null = null;
 
   private constructor(
     private extensionUri: vscode.Uri,
@@ -24,60 +28,93 @@ export class ChatPanel {
     private activeAccountLabel: () => string
   ) {
     this.session = new ChatSession(backend);
-    this.panel = vscode.window.createWebviewPanel('keyRotatorChat', 'KeyRotator Chat', vscode.ViewColumn.One, {
+    this.panel = vscode.window.createWebviewPanel('keyRotatorChat', 'Nuevo chat', vscode.ViewColumn.Active, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'src', 'ui', 'media')],
     });
 
     this.panel.webview.html = this.render();
-    this.panel.onDidDispose(() => (ChatPanel.current = undefined));
+    this.panel.onDidDispose(() => ChatPanel.panels.delete(this));
     this.panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg));
+    ChatPanel.panels.add(this);
   }
 
+  /** Reveal the most recent panel, or create one if none exist. */
   static createOrShow(extensionUri: vscode.Uri, backend: ChatBackend, activeAccountLabel: () => string): ChatPanel {
-    if (ChatPanel.current) {
-      ChatPanel.current.panel.reveal();
-    } else {
-      ChatPanel.current = new ChatPanel(extensionUri, backend, activeAccountLabel);
+    const existing = [...ChatPanel.panels].pop();
+    if (existing) {
+      existing.panel.reveal();
+      return existing;
     }
-    return ChatPanel.current;
+    return new ChatPanel(extensionUri, backend, activeAccountLabel);
   }
 
-  /** Open the panel on a specific session (or a new one when id is null). */
+  /**
+   * Open a session in its own tab. If a panel already shows that session it is
+   * revealed; otherwise a NEW panel opens (multiple chats side by side).
+   */
   static openSession(
     extensionUri: vscode.Uri,
     backend: ChatBackend,
     activeAccountLabel: () => string,
     id: string | null
   ): void {
-    const panel = ChatPanel.createOrShow(extensionUri, backend, activeAccountLabel);
-    if (id) panel.loadSession(id);
-    else panel.startNewSession();
+    if (id) {
+      for (const p of ChatPanel.panels) {
+        if (p.session.currentSessionId === id) {
+          p.panel.reveal();
+          return;
+        }
+      }
+    }
+    const panel = new ChatPanel(extensionUri, backend, activeAccountLabel);
+    // The webview posts 'ready' on load; loading immediately also works since
+    // postMessage is queued, but defer to ready for ordering with config.
+    if (id) panel.pendingSessionId = id;
   }
 
-  /** Re-push account state to the open panel (e.g. after switching account). */
+  private pendingSessionId: string | null = null;
+
+  /** Re-push account state to every open panel (e.g. after a global switch). */
   static refreshIfOpen(): void {
-    const c = ChatPanel.current;
-    if (!c) return;
-    c.post({ type: 'meta', activeAccount: c.activeAccountLabel(), sessionId: c.session.currentSessionId });
+    for (const p of ChatPanel.panels) {
+      p.post({ type: 'meta', activeAccount: p.currentAccountLabel(), sessionId: p.session.currentSessionId });
+      p.post({ type: 'accounts', accounts: p.accountsForMenu() });
+    }
   }
 
   private post(msg: Record<string, unknown>): void {
     void this.panel.webview.postMessage(msg);
   }
 
-  /** Detect the active key's models and push them to the dropdown (Copilot-style). */
-  private async postModels(): Promise<void> {
-    const models = await this.backend.listModels();
-    const cfg = vscode.workspace.getConfiguration('keyRotator');
-    let selected = cfg.get<string>('chatModel', '').trim();
-    if (!selected || !models.some((m) => m.id === selected)) {
-      selected = models[0]?.id ?? '';
-      if (selected) await cfg.update('chatModel', selected, vscode.ConfigurationTarget.Global);
+  private currentAccountLabel(): string {
+    if (this.accountId) {
+      const acc = this.backend.listChatAccounts().find((a) => a.id === this.accountId);
+      if (acc) return acc.label;
     }
-    this.session.setModel(selected || null);
-    this.post({ type: 'models', models, selected });
+    return this.activeAccountLabel();
+  }
+
+  private accountsForMenu(): { id: string; label: string; active: boolean }[] {
+    const accounts = this.backend.listChatAccounts();
+    if (!this.accountId) return accounts;
+    return accounts.map((a) => ({ ...a, active: a.id === this.accountId }));
+  }
+
+  /** Push models: cached list instantly, then network-refreshed in background. */
+  private postModels(): void {
+    const apply = async (models: { id: string; label: string }[]) => {
+      const cfg = vscode.workspace.getConfiguration('keyRotator');
+      let selected = cfg.get<string>('chatModel', '').trim();
+      if (!selected || !models.some((m) => m.id === selected)) {
+        selected = models[0]?.id ?? '';
+      }
+      this.session.setModel(selected || null);
+      this.post({ type: 'models', models, selected });
+    };
+    void apply(this.backend.getCachedModels(this.accountId));
+    void this.backend.listModels(this.accountId).then((models) => apply(models));
   }
 
   private loadSession(id: string): void {
@@ -85,17 +122,19 @@ export class ChatPanel {
     const loaded = this.backend.loadHistory(id);
     const name = this.backend.listSessions().find((s) => s.id === id)?.name ?? 'Conversación';
     this.session.setActiveSession(id, loaded?.cwd ?? null);
+    this.panel.title = name;
     this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: id });
     this.post({ type: 'title', title: name });
-    this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: id });
+    this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: id });
   }
 
   private startNewSession(): void {
     if (this.session.isBusy()) return;
     this.session.reset();
+    this.panel.title = 'Nuevo chat';
     this.post({ type: 'history', messages: [], activeId: null });
     this.post({ type: 'title', title: 'Nueva conversación' });
-    this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: null });
+    this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: null });
   }
 
   private async handleMessage(msg: IncomingMessage): Promise<void> {
@@ -104,11 +143,16 @@ export class ChatPanel {
         const cfg = vscode.workspace.getConfiguration('keyRotator');
         const effort = cfg.get<string>('chatEffort', '').trim();
         this.session.setEffort(effort || null);
-        this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
+        this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: this.session.currentSessionId });
         this.post({ type: 'config', effort });
-        this.post({ type: 'accounts', accounts: this.backend.listChatAccounts() });
+        this.post({ type: 'accounts', accounts: this.accountsForMenu() });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
-        void this.postModels();
+        this.postModels();
+        if (this.pendingSessionId) {
+          const id = this.pendingSessionId;
+          this.pendingSessionId = null;
+          this.loadSession(id);
+        }
         break;
       }
 
@@ -134,14 +178,14 @@ export class ChatPanel {
         this.startNewSession();
         break;
 
-      // ----- account menu -----
+      // ----- per-panel account menu -----
       case 'switchAccount':
         if (msg.id) {
-          await vscode.commands.executeCommand('keyRotator.setChatAccount', { account: { id: msg.id } });
-          this.post({ type: 'meta', activeAccount: this.activeAccountLabel(), sessionId: this.session.currentSessionId });
-          this.post({ type: 'accounts', accounts: this.backend.listChatAccounts() });
-          // Different account → its key may expose different models.
-          void this.postModels();
+          this.accountId = msg.id;
+          this.session.setAccount(msg.id);
+          this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: this.session.currentSessionId });
+          this.post({ type: 'accounts', accounts: this.accountsForMenu() });
+          this.postModels();
         }
         break;
       case 'addAccount':
