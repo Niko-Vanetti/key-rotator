@@ -205,8 +205,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   type ChatMode = 'failover' | 'full' | 'profiles';
   const getChatMode = (): ChatMode => {
-    const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'failover');
-    return m === 'full' || m === 'profiles' ? m : 'failover';
+    const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'full');
+    return m === 'failover' || m === 'profiles' ? m : 'full';
   };
 
   /** Per-account CLAUDE_CONFIG_DIR (its own OAuth login) for `profiles` mode. */
@@ -429,6 +429,9 @@ export function activate(context: vscode.ExtensionContext) {
       return prior && prior.length > 0 ? prior : FALLBACK_MODELS;
     },
     listChatAccounts: () => {
+      // In 'full' mode the chat always uses the user's login (subscription),
+      // so per-account switching doesn't apply — hide the picker.
+      if (getChatMode() === 'full') return [];
       const activeId = sortedActiveAnthropic()[0]?.id;
       return keyManager
         .getAllMeta()

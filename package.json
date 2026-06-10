@@ -90,11 +90,11 @@
           "type": "string",
           "enum": ["failover", "full", "profiles"],
           "enumDescriptions": [
-            "Failover (recomendado para el navegador de sesiones): API keys de tus cuentas + rotación al agotarse. Comparte las sesiones con Claude Code nativo (mismo almacén local), así puedes continuar aquí un chat de allá y viceversa. Requiere saldo de API.",
-            "Full: tu login por defecto de Claude. Integraciones de claude.ai, una sola cuenta, sin rotación. También comparte sesiones con el Claude Code nativo.",
-            "Profiles: login aislado por cuenta (integraciones claude.ai + rotación). OJO: usa un almacén de sesiones separado, así que NO comparte sesiones con el Claude Code nativo."
+            "Failover (requiere saldo de API): API keys de tus cuentas + rotación al agotarse. Comparte las sesiones con Claude Code nativo (mismo almacén local), así puedes continuar aquí un chat de allá y viceversa.",
+            "Full (recomendado con una sola cuenta de Claude.ai): tu login por defecto de Claude, usa el saldo de tu suscripción. Integraciones de claude.ai, sin rotación. También comparte sesiones con el Claude Code nativo.",
+            "Profiles: login aislado por cuenta (integraciones claude.ai + rotación). Útil solo si tienes 2+ cuentas de Claude.ai distintas. OJO: usa un almacén de sesiones separado, así que NO comparte sesiones con el Claude Code nativo."
           ],
-          "default": "failover",
+          "default": "full",
           "description": "Cómo autentica el KeyRotator Chat. 'failover' = API key + rotación (comparte sesiones con el Claude Code nativo). 'full' = login único. 'profiles' = login por cuenta aislado (no comparte sesiones)."
         },
         "keyRotator.chatMcpConfig": {
