@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}};" />
+  <link rel="stylesheet" href="{{styleUri}}" />
+  <title>KeyRotator</title>
+</head>
+<body>
+  <div class="tabs">
+    <button class="tab active" data-tab="keys">Keys</button>
+    <button class="tab" data-tab="history">Historial</button>
+    <button class="tab" data-tab="stats">Estadísticas</button>
+  </div>
+
+  <section id="keys" class="panel active">
+    <div class="add-form">
+      <input id="newLabel" placeholder="Nombre (ej: Claude Cuenta 2)" />
+      <input id="newApiKey" placeholder="Pega la API key aquí" type="password" />
+      <input id="newProvider" placeholder="Proveedor (auto-detectado)" />
+      <input id="newEnvVar" placeholder="Variable de entorno (ej: ANTHROPIC_API_KEY)" />
+      <input id="newEndpoint" placeholder="Endpoint (opcional, para Ollama/custom)" class="full" />
+      <div class="detect-hint" id="detectHint"></div>
+      <button id="addBtn" class="full">Agregar cuenta</button>
+    </div>
+    <div id="accountList"></div>
+  </section>
+
+  <section id="history" class="panel">
+    <table id="historyTable">
+      <thead><tr><th>Fecha</th><th>De</th><th>A</th><th>Proveedor</th><th>Razón</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="historyEmpty">Sin rotaciones todavía.</div>
+  </section>
+
+  <section id="stats" class="panel">
+    <div class="stat-block">
+      <h3>Rotaciones por proveedor</h3>
+      <div id="statsByProvider"></div>
+    </div>
+    <div class="stat-block">
+      <h3>Cuenta más estable</h3>
+      <div id="mostStable"></div>
+    </div>
+  </section>
+
+  <script src="{{scriptUri}}"></script>
+</body>
+</html>
