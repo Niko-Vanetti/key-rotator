@@ -51,13 +51,81 @@
   // ---------- helpers ----------
   const clearWelcome = () => { const w = messagesEl.querySelector('.welcome'); if (w) w.remove(); };
   const scrollToBottom = () => { messagesEl.scrollTop = messagesEl.scrollHeight; };
-  function addMessage(role, text, asMarkdown) {
-    clearWelcome();
+  function buildMessageEl(role, text, asMarkdown) {
     const row = document.createElement('div'); row.className = 'msg ' + role;
     const who = document.createElement('div'); who.className = 'who'; who.textContent = role === 'user' ? 'Tú' : 'Claude';
     const body = document.createElement('div'); body.className = 'body';
     if (asMarkdown) body.innerHTML = renderMarkdown(text || ''); else body.textContent = text || '';
-    row.appendChild(who); row.appendChild(body); messagesEl.appendChild(row); scrollToBottom(); return body;
+    row.appendChild(who); row.appendChild(body);
+    return { row, body };
+  }
+  function addMessage(role, text, asMarkdown) {
+    clearWelcome();
+    const { row, body } = buildMessageEl(role, text, asMarkdown);
+    messagesEl.appendChild(row); scrollToBottom(); return body;
+  }
+
+  // ---------- loading screen + progressive history ----------
+  let allMessages = [];
+  let renderedStart = 0;
+  const INITIAL_CHUNK = 60, RAF_BATCH = 15, EARLIER_CHUNK = 100;
+
+  function showLoading(title) {
+    messagesEl.innerHTML = '';
+    streamingEl = null; streamingRaw = '';
+    const box = document.createElement('div');
+    box.className = 'loading-box';
+    box.innerHTML = '<div class="spinner"></div><div class="loading-text">Cargando ' + (title ? '“' + title + '”' : 'chat') + '…</div><div class="loading-sub">Leyendo historial local (no gasta tokens)</div>';
+    messagesEl.appendChild(box);
+    inputEl.disabled = true; sendBtn.disabled = true;
+  }
+
+  function addLoadEarlierBtn() {
+    const btn = document.createElement('button');
+    btn.id = 'loadEarlier';
+    btn.className = 'load-earlier';
+    btn.textContent = '⬆ Cargar ' + Math.min(EARLIER_CHUNK, renderedStart) + ' mensajes anteriores (' + renderedStart + ' ocultos)';
+    btn.addEventListener('click', () => {
+      const from = Math.max(0, renderedStart - EARLIER_CHUNK);
+      const frag = document.createDocumentFragment();
+      for (let i = from; i < renderedStart; i++) {
+        const m = allMessages[i];
+        frag.appendChild(buildMessageEl(m.role, m.text, m.role === 'assistant').row);
+      }
+      btn.after(frag);
+      renderedStart = from;
+      if (renderedStart === 0) btn.remove();
+      else btn.textContent = '⬆ Cargar ' + Math.min(EARLIER_CHUNK, renderedStart) + ' mensajes anteriores (' + renderedStart + ' ocultos)';
+    });
+    messagesEl.appendChild(btn);
+  }
+
+  function renderHistory(messages) {
+    messagesEl.innerHTML = '';
+    streamingEl = null; streamingRaw = '';
+    allMessages = messages || [];
+    if (allMessages.length === 0) {
+      if (!activeId) addNotice('info', 'Nueva conversación. Escribe para empezar.');
+      setSending(false);
+      return;
+    }
+    renderedStart = Math.max(0, allMessages.length - INITIAL_CHUNK);
+    if (renderedStart > 0) addLoadEarlierBtn();
+    // Progressive render in rAF batches so the webview never freezes.
+    let i = renderedStart;
+    const step = () => {
+      const end = Math.min(i + RAF_BATCH, allMessages.length);
+      const frag = document.createDocumentFragment();
+      for (; i < end; i++) {
+        const m = allMessages[i];
+        frag.appendChild(buildMessageEl(m.role, m.text, m.role === 'assistant').row);
+      }
+      messagesEl.appendChild(frag);
+      scrollToBottom();
+      if (i < allMessages.length) requestAnimationFrame(step);
+      else setSending(false);
+    };
+    requestAnimationFrame(step);
   }
   function addNotice(kind, text) {
     clearWelcome(); const el = document.createElement('div'); el.className = 'notice ' + kind; el.textContent = text;
@@ -185,12 +253,12 @@
       }
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'slash': slashCommands = msg.commands || []; break;
+      case 'loading':
+        showLoading(msg.title);
+        break;
       case 'history':
         activeId = msg.activeId ?? null;
-        messagesEl.innerHTML = ''; streamingEl = null; streamingRaw = '';
-        if (!msg.messages || msg.messages.length === 0) { if (!activeId) addNotice('info', 'Nueva conversación. Escribe para empezar.'); }
-        else { for (const m of msg.messages) addMessage(m.role, m.text, m.role === 'assistant'); }
-        setSending(false);
+        renderHistory(msg.messages);
         break;
       case 'meta':
         activeAccountEl.textContent = msg.activeAccount || '—';

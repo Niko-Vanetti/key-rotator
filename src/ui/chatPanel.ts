@@ -117,14 +117,16 @@ export class ChatPanel {
     void this.backend.listModels(this.accountId).then((models) => apply(models));
   }
 
-  private loadSession(id: string): void {
+  private async loadSession(id: string): Promise<void> {
     if (this.session.isBusy()) return;
-    const loaded = this.backend.loadHistory(id);
     const name = this.backend.listSessions().find((s) => s.id === id)?.name ?? 'Conversación';
-    this.session.setActiveSession(id, loaded?.cwd ?? null);
     this.panel.title = name;
-    this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: id });
+    // Immediate feedback: show the loading screen before any file I/O.
+    this.post({ type: 'loading', title: name });
     this.post({ type: 'title', title: name });
+    const loaded = await this.backend.loadHistory(id);
+    this.session.setActiveSession(id, loaded?.cwd ?? null);
+    this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: id });
     this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: id });
   }
 
@@ -151,7 +153,7 @@ export class ChatPanel {
         if (this.pendingSessionId) {
           const id = this.pendingSessionId;
           this.pendingSessionId = null;
-          this.loadSession(id);
+          void this.loadSession(id);
         }
         break;
       }
@@ -171,7 +173,7 @@ export class ChatPanel {
       }
 
       case 'selectSession':
-        if (msg.id) this.loadSession(msg.id);
+        if (msg.id) void this.loadSession(msg.id);
         break;
 
       case 'newSession':

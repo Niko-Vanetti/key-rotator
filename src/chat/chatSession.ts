@@ -53,8 +53,8 @@ export interface ChatBackend {
   getLauncher(): { command: string; baseArgs: string[]; useShell: boolean };
   /** Named sessions from the shared local store (for the sidebar). */
   listSessions(): SessionSummary[];
-  /** Load one session's cwd + message thread for display. */
-  loadHistory(id: string): { cwd: string; messages: ChatMessage[] } | null;
+  /** Load one session's cwd + message thread for display (async, non-blocking). */
+  loadHistory(id: string): Promise<{ cwd: string; messages: ChatMessage[] } | null>;
   /** Slash commands (skills) for the `/` autocomplete — read from disk, free. */
   getSlashCommands(): string[];
   /** Accounts available for the chat (for the account menu). */

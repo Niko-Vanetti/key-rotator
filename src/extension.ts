@@ -14,7 +14,7 @@ import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
-import { listNamedSessions, loadSession, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
+import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -372,7 +372,7 @@ export function activate(context: vscode.ExtensionContext) {
       };
     },
     listSessions: () => listNamedSessions(),
-    loadHistory: (id: string) => loadSession(id),
+    loadHistory: (id: string) => loadSessionAsync(id),
     getSlashCommands: () => listSlashCommands(),
     getCachedModels: (accountId?: string | null) => {
       // Instant, sync: persisted cache from the last successful detection.

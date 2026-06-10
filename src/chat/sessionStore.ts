@@ -234,3 +234,28 @@ export function loadSession(
   }
   return null;
 }
+
+/** Async variant — reads off the event loop so the UI never blocks. */
+export async function loadSessionAsync(
+  id: string,
+  projectsRoot = defaultProjectsRoot()
+): Promise<{ cwd: string; messages: ChatMessage[] } | null> {
+  let dirs: string[];
+  try {
+    dirs = await fs.promises.readdir(projectsRoot);
+  } catch {
+    return null;
+  }
+  for (const d of dirs) {
+    const filePath = path.join(projectsRoot, d, `${id}.jsonl`);
+    let content: string;
+    try {
+      content = await fs.promises.readFile(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+    const lines = content.split('\n').filter(Boolean);
+    return { cwd: parseCwd(lines) ?? '', messages: parseHistory(lines) };
+  }
+  return null;
+}
