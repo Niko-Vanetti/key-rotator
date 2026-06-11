@@ -60,7 +60,9 @@ export class WebChatRunner {
     private provider: string,
     private profileDir: string,
     /** Browser preference passed to the daemon (KeyRotator setting). */
-    private browserPref: string = 'auto'
+    private browserPref: string = 'auto',
+    /** Drive the user's real everyday browser profile (one-click Google). */
+    private useRealProfile: boolean = false
   ) {}
 
   private ensure(): Promise<void> {
@@ -72,7 +74,12 @@ export class WebChatRunner {
           // In the VS Code extension host `process.execPath` is the Code/Electron
           // binary; this flag makes it run the daemon as plain Node. Harmless
           // when nodePath is already a real node executable.
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', KR_WEB_BROWSER: this.browserPref },
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: '1',
+            KR_WEB_BROWSER: this.browserPref,
+            KR_WEB_REAL_PROFILE: this.useRealProfile ? '1' : '0',
+          },
         });
       } catch (e) {
         reject(e as Error);

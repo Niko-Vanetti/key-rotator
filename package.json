@@ -274,6 +274,11 @@
             "Google Chrome"
           ],
           "description": "Qué navegador usa el chat web (DeepSeek, …). 'auto' respeta tu navegador por defecto. También acepta una ruta absoluta a un .exe de un navegador Chromium. Debe ser un navegador basado en Chromium (Firefox no es compatible con esta automatización)."
+        },
+        "keyRotator.webChatUseRealProfile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Usar tu PERFIL real del navegador (donde ya tienes sesión de Google) para el chat web, en vez de un perfil aislado. Ventaja: inicias sesión con Google de un clic. Requisito: debes CERRAR ese navegador por completo (incluido el icono de la bandeja) mientras KeyRotator lo usa — dos procesos no pueden compartir el mismo perfil. Si está apagado, KeyRotator usa un perfil aislado y no toca tu navegación."
         }
       }
     }

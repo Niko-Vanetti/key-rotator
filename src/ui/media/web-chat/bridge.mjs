@@ -145,33 +145,61 @@ function bundledChromium() {
   return best;
 }
 
+// The everyday user-data-dir of each browser (where the user's Google session
+// lives). Used by the "real profile" mode so login is one-click with Google.
+const APPDATA = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+const REAL_PROFILE = {
+  'opera-gx': path.join(APPDATA, 'Opera Software', 'Opera GX Stable'),
+  opera: path.join(APPDATA, 'Opera Software', 'Opera Stable'),
+  chrome: path.join(LAD, 'Google', 'Chrome', 'User Data'),
+  msedge: path.join(LAD, 'Microsoft', 'Edge', 'User Data'),
+  brave: path.join(LAD, 'BraveSoftware', 'Brave-Browser', 'User Data'),
+  vivaldi: path.join(LAD, 'Vivaldi', 'User Data'),
+};
+
+// The browser key picked by the last findBrowser() call (for real-profile mode).
+let CHOSEN_KEY = null;
+
 // Resolve which browser to launch. `pref` comes from the KeyRotator setting
 // (env KR_WEB_BROWSER): 'auto', a known key, or an absolute exe path.
 function findBrowser() {
+  CHOSEN_KEY = null;
   if (process.env.PW_CHROMIUM && fs.existsSync(process.env.PW_CHROMIUM)) return process.env.PW_CHROMIUM;
   const pref = (process.env.KR_WEB_BROWSER || 'auto').trim();
   if (pref && pref !== 'auto') {
     if (/[\\/]/.test(pref) && fs.existsSync(pref)) return pref; // explicit path
     if (BROWSERS[pref]) {
       const p = BROWSERS[pref]();
-      if (p) return p;
+      if (p) {
+        CHOSEN_KEY = pref;
+        return p;
+      }
     }
   }
   // Auto: the OS default browser, if it's a Chromium we can drive…
   const def = defaultBrowserKey();
   if (def && BROWSERS[def]) {
     const p = BROWSERS[def]();
-    if (p) return p;
+    if (p) {
+      CHOSEN_KEY = def;
+      return p;
+    }
   }
   // …else the first installed real browser (Chrome last, since it's often the
   // one people keep only for testing)…
   for (const key of ['opera-gx', 'opera', 'msedge', 'brave', 'vivaldi', 'chrome']) {
     const p = BROWSERS[key]();
-    if (p) return p;
+    if (p) {
+      CHOSEN_KEY = key;
+      return p;
+    }
   }
   // …else the bundled Playwright Chromium.
   return bundledChromium();
 }
+
+// A user-facing browser name for messages.
+const BROWSER_NAMES = { 'opera-gx': 'Opera GX', opera: 'Opera', msedge: 'Microsoft Edge', brave: 'Brave', vivaldi: 'Vivaldi', chrome: 'Chrome' };
 
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 
@@ -193,13 +221,37 @@ async function ensure(headless) {
     });
     throw new Error('no browser');
   }
-  const ctx = await chromium.launchPersistentContext(PROFILE, {
-    headless,
-    executablePath: exe,
-    args: ['--disable-blink-features=AutomationControlled'],
-    viewport: { width: 1280, height: 900 },
-    userAgent: UA,
-  });
+
+  // Real-profile mode: drive the user's everyday browser profile (their Google
+  // session is there → one-click login), instead of the isolated profile.
+  let userDataDir = PROFILE;
+  let usingReal = false;
+  if (process.env.KR_WEB_REAL_PROFILE === '1' && CHOSEN_KEY && REAL_PROFILE[CHOSEN_KEY] && fs.existsSync(REAL_PROFILE[CHOSEN_KEY])) {
+    userDataDir = REAL_PROFILE[CHOSEN_KEY];
+    usingReal = true;
+  }
+
+  let ctx;
+  try {
+    ctx = await chromium.launchPersistentContext(userDataDir, {
+      headless,
+      executablePath: exe,
+      args: ['--disable-blink-features=AutomationControlled'],
+      viewport: { width: 1280, height: 900 },
+      userAgent: UA,
+    });
+  } catch (e) {
+    const name = BROWSER_NAMES[CHOSEN_KEY] || 'tu navegador';
+    if (usingReal && /singleton|already in use|ProcessSingleton|cannot create|in use|lock/i.test(String(e?.message))) {
+      send({
+        type: 'error',
+        message: `Cierra ${name} por completo (incluido el icono de la bandeja del sistema: clic derecho → Salir) para que KeyRotator pueda usar tu perfil. Luego reintenta.`,
+      });
+    } else {
+      send({ type: 'error', message: `No se pudo abrir ${name}: ${String(e?.message || e).slice(0, 120)}` });
+    }
+    throw e;
+  }
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   cur = { ctx, page, headless };
   return cur;

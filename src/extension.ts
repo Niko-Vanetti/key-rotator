@@ -254,13 +254,15 @@ export function activate(context: vscode.ExtensionContext) {
   ).fsPath;
   const getWebBrowserPref = (): string =>
     vscode.workspace.getConfiguration('keyRotator').get<string>('webChatBrowser', 'auto') || 'auto';
+  const getWebRealProfile = (): boolean =>
+    vscode.workspace.getConfiguration('keyRotator').get<boolean>('webChatUseRealProfile', false);
   // Runners are cached by PROFILE dir (= provider), so two accounts of the same
   // provider share one browser/daemon and never fight over the locked profile.
   const webRunners = new Map<string, WebChatRunner>();
   const getWebRunner = (_accountId: string, provider: string, profile: string): WebChatRunner => {
     let r = webRunners.get(profile);
     if (!r) {
-      r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile, getWebBrowserPref());
+      r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile, getWebBrowserPref(), getWebRealProfile());
       webRunners.set(profile, r);
     }
     return r;
@@ -323,7 +325,12 @@ export function activate(context: vscode.ExtensionContext) {
         new Promise<void>((resolve) => {
           const child = childProcess.spawn(process.execPath, [webDaemonPath, key, dir], {
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', KR_WEB_BROWSER: getWebBrowserPref() },
+            env: {
+              ...process.env,
+              ELECTRON_RUN_AS_NODE: '1',
+              KR_WEB_BROWSER: getWebBrowserPref(),
+              KR_WEB_REAL_PROFILE: getWebRealProfile() ? '1' : '0',
+            },
           });
           const rl = readline.createInterface({ input: child.stdout });
           let started = false;
@@ -999,7 +1006,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Changing the web browser preference rebuilds runners with the new browser.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('keyRotator.webChatBrowser')) {
+      if (e.affectsConfiguration('keyRotator.webChatBrowser') || e.affectsConfiguration('keyRotator.webChatUseRealProfile')) {
         for (const r of webRunners.values()) r.dispose();
         webRunners.clear();
       }
