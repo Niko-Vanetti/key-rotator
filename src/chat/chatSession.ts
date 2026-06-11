@@ -8,6 +8,7 @@ import {
   isNotLoggedIn,
 } from './streamParser.js';
 import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
+import type { WebChatRunner } from './webChatRunner.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -26,6 +27,11 @@ export interface ActiveAccount {
    * failover can roll between accounts while keeping full features.
    */
   configDir?: string;
+  /**
+   * Web-chat account (DeepSeek, …): the turn is served by driving a logged-in
+   * web chat in a headless browser instead of the `claude` CLI. No API/key.
+   */
+  web?: { provider: string; profileDir: string };
 }
 
 /**
@@ -65,6 +71,8 @@ export interface ChatBackend {
   getCachedModels(accountId?: string | null): { id: string; label: string }[];
   /** Refresh the model list from the Models API (background, cached). */
   listModels(accountId?: string | null): Promise<{ id: string; label: string }[]>;
+  /** Get (or lazily create) the web-chat daemon runner for a web account. */
+  getWebRunner?(accountId: string, provider: string, profileDir: string): WebChatRunner;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */
@@ -154,6 +162,13 @@ export class ChatSession {
         return;
       }
 
+      // Web-chat accounts (DeepSeek, …) are served by the browser daemon, not
+      // the claude CLI — handle them on a separate path (no failover/sessions).
+      if (account.web) {
+        await this.runWebTurn(text, account, handlers);
+        return;
+      }
+
       for (let attempt = 0; attempt <= MAX_FAILOVERS; attempt++) {
         const outcome = await this.runTurn(text, account, handlers);
 
@@ -212,6 +227,36 @@ export class ChatSession {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Serve a turn from a web-chat account via the browser daemon. */
+  private runWebTurn(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
+    return new Promise((resolve) => {
+      const runner = this.backend.getWebRunner?.(account.id, account.web!.provider, account.web!.profileDir);
+      if (!runner) {
+        handlers.onError('El soporte de chat web no está disponible.');
+        resolve();
+        return;
+      }
+      handlers.onModel(account.label);
+      void runner.send(text, {
+        onDelta: (t) => handlers.onDelta(t),
+        onDone: (full) => {
+          handlers.onDone(full);
+          resolve();
+        },
+        onError: (t) => {
+          handlers.onError(t);
+          resolve();
+        },
+        onLoginNeeded: () => {
+          handlers.onError(
+            `La cuenta web "${account.label}" no tiene sesión iniciada. Usa "KeyRotator: Iniciar sesión (cuenta web)" para entrar una vez en el navegador.`
+          );
+          resolve();
+        },
+      });
+    });
   }
 
   /** Run a single attempt of a turn against one account. */

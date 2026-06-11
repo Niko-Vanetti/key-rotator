@@ -6,6 +6,7 @@ scripts/**
 docs/**
 out/**
 node_modules/**
+!node_modules/playwright-core/**
 .gitignore
 tsconfig.json
 esbuild.js

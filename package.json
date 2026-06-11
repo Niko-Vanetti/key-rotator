@@ -7,57 +7,192 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
-        { "id": "keyRotator", "title": "KeyRotator", "icon": "$(key)" }
+        {
+          "id": "keyRotator",
+          "title": "KeyRotator",
+          "icon": "$(key)"
+        }
       ]
     },
     "views": {
       "keyRotator": [
-        { "id": "keyRotatorChats", "name": "Chats" },
-        { "id": "keyRotatorAccounts", "name": "Accounts" }
+        {
+          "id": "keyRotatorChats",
+          "name": "Chats"
+        },
+        {
+          "id": "keyRotatorAccounts",
+          "name": "Accounts"
+        }
       ]
     },
     "commands": [
-      { "command": "keyRotator.addAccount", "title": "KeyRotator: Add Account", "icon": "$(add)" },
-      { "command": "keyRotator.addLoginAccount", "title": "KeyRotator: Add Account (Login)", "icon": "$(sign-in)" },
-      { "command": "keyRotator.editAccount", "title": "KeyRotator: Edit Account", "icon": "$(edit)" },
-      { "command": "keyRotator.deleteAccount", "title": "KeyRotator: Delete Account", "icon": "$(trash)" },
-      { "command": "keyRotator.activateAccount", "title": "KeyRotator: Activate Account", "icon": "$(check)" },
-      { "command": "keyRotator.disableAccount", "title": "KeyRotator: Disable Account", "icon": "$(circle-slash)" },
-      { "command": "keyRotator.openDashboard", "title": "KeyRotator: Open Dashboard", "icon": "$(dashboard)" },
-      { "command": "keyRotator.openChat", "title": "KeyRotator: Open Chat", "icon": "$(comment-discussion)" },
-      { "command": "keyRotator.openChatSession", "title": "KeyRotator: Open Chat Session" },
-      { "command": "keyRotator.newChatSession", "title": "KeyRotator: New Chat Session", "icon": "$(add)" },
-      { "command": "keyRotator.loginProfile", "title": "KeyRotator: Log in Account (Chat)", "icon": "$(sign-in)" },
-      { "command": "keyRotator.setChatAccount", "title": "KeyRotator: Use this Account in Chat" },
-      { "command": "keyRotator.moveAccountUp", "title": "KeyRotator: Subir prioridad", "icon": "$(arrow-up)" },
-      { "command": "keyRotator.moveAccountDown", "title": "KeyRotator: Bajar prioridad", "icon": "$(arrow-down)" },
-      { "command": "keyRotator.testAccount", "title": "KeyRotator: Probar cuenta (diagnóstico)", "icon": "$(beaker)" },
-      { "command": "keyRotator.reportRateLimit", "title": "KeyRotator: Report Rate Limit on Active Account" },
-      { "command": "keyRotator.rotateNow", "title": "KeyRotator: Rotate Now" }
+      {
+        "command": "keyRotator.addAccount",
+        "title": "KeyRotator: Add Account",
+        "icon": "$(add)"
+      },
+      {
+        "command": "keyRotator.addLoginAccount",
+        "title": "KeyRotator: Add Account (Login)",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "keyRotator.editAccount",
+        "title": "KeyRotator: Edit Account",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "keyRotator.deleteAccount",
+        "title": "KeyRotator: Delete Account",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "keyRotator.activateAccount",
+        "title": "KeyRotator: Activate Account",
+        "icon": "$(check)"
+      },
+      {
+        "command": "keyRotator.disableAccount",
+        "title": "KeyRotator: Disable Account",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "keyRotator.openDashboard",
+        "title": "KeyRotator: Open Dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "keyRotator.openChat",
+        "title": "KeyRotator: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "keyRotator.openChatSession",
+        "title": "KeyRotator: Open Chat Session"
+      },
+      {
+        "command": "keyRotator.newChatSession",
+        "title": "KeyRotator: New Chat Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "keyRotator.loginProfile",
+        "title": "KeyRotator: Log in Account (Chat)",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "keyRotator.webChatLogin",
+        "title": "KeyRotator: Iniciar sesión (cuenta web)",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "keyRotator.setChatAccount",
+        "title": "KeyRotator: Use this Account in Chat"
+      },
+      {
+        "command": "keyRotator.moveAccountUp",
+        "title": "KeyRotator: Subir prioridad",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "keyRotator.moveAccountDown",
+        "title": "KeyRotator: Bajar prioridad",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "keyRotator.testAccount",
+        "title": "KeyRotator: Probar cuenta (diagnóstico)",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "keyRotator.reportRateLimit",
+        "title": "KeyRotator: Report Rate Limit on Active Account"
+      },
+      {
+        "command": "keyRotator.rotateNow",
+        "title": "KeyRotator: Rotate Now"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "keyRotator.newChatSession", "when": "view == keyRotatorChats", "group": "navigation@0" },
-        { "command": "keyRotator.openChat", "when": "view == keyRotatorChats", "group": "navigation@1" },
-        { "command": "keyRotator.addAccount", "when": "view == keyRotatorAccounts", "group": "navigation@1" },
-        { "command": "keyRotator.addLoginAccount", "when": "view == keyRotatorAccounts", "group": "navigation@2" },
-        { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation@3" }
+        {
+          "command": "keyRotator.newChatSession",
+          "when": "view == keyRotatorChats",
+          "group": "navigation@0"
+        },
+        {
+          "command": "keyRotator.openChat",
+          "when": "view == keyRotatorChats",
+          "group": "navigation@1"
+        },
+        {
+          "command": "keyRotator.addAccount",
+          "when": "view == keyRotatorAccounts",
+          "group": "navigation@1"
+        },
+        {
+          "command": "keyRotator.addLoginAccount",
+          "when": "view == keyRotatorAccounts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "keyRotator.openDashboard",
+          "when": "view == keyRotatorAccounts",
+          "group": "navigation@3"
+        }
       ],
       "view/item/context": [
-        { "command": "keyRotator.moveAccountUp", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline@1" },
-        { "command": "keyRotator.moveAccountDown", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline@2" },
-        { "command": "keyRotator.testAccount", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline@3" },
-        { "command": "keyRotator.activateAccount", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline" },
-        { "command": "keyRotator.loginProfile", "when": "view == keyRotatorAccounts && viewItem == account && config.keyRotator.chatMode == profiles" },
-        { "command": "keyRotator.editAccount", "when": "view == keyRotatorAccounts && viewItem == account" },
-        { "command": "keyRotator.disableAccount", "when": "view == keyRotatorAccounts && viewItem == account" },
-        { "command": "keyRotator.deleteAccount", "when": "view == keyRotatorAccounts && viewItem == account" }
+        {
+          "command": "keyRotator.moveAccountUp",
+          "when": "view == keyRotatorAccounts && viewItem == account",
+          "group": "inline@1"
+        },
+        {
+          "command": "keyRotator.moveAccountDown",
+          "when": "view == keyRotatorAccounts && viewItem == account",
+          "group": "inline@2"
+        },
+        {
+          "command": "keyRotator.testAccount",
+          "when": "view == keyRotatorAccounts && viewItem == account",
+          "group": "inline@3"
+        },
+        {
+          "command": "keyRotator.activateAccount",
+          "when": "view == keyRotatorAccounts && viewItem == account",
+          "group": "inline"
+        },
+        {
+          "command": "keyRotator.loginProfile",
+          "when": "view == keyRotatorAccounts && viewItem == account && config.keyRotator.chatMode == profiles"
+        },
+        {
+          "command": "keyRotator.webChatLogin",
+          "when": "view == keyRotatorAccounts && viewItem == account"
+        },
+        {
+          "command": "keyRotator.editAccount",
+          "when": "view == keyRotatorAccounts && viewItem == account"
+        },
+        {
+          "command": "keyRotator.disableAccount",
+          "when": "view == keyRotatorAccounts && viewItem == account"
+        },
+        {
+          "command": "keyRotator.deleteAccount",
+          "when": "view == keyRotatorAccounts && viewItem == account"
+        }
       ]
     },
     "configuration": {
@@ -85,13 +220,24 @@
         },
         "keyRotator.chatEffort": {
           "type": "string",
-          "enum": ["", "low", "medium", "high", "xhigh", "max"],
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
           "default": "",
           "description": "Nivel de esfuerzo/razonamiento para el chat (--effort). Vacío = default del modelo. 'xhigh'/'max' = máxima calidad. También se cambia desde el selector del chat."
         },
         "keyRotator.chatMode": {
           "type": "string",
-          "enum": ["failover", "full", "profiles"],
+          "enum": [
+            "failover",
+            "full",
+            "profiles"
+          ],
           "enumDescriptions": [
             "Failover (requiere saldo de API): API keys de tus cuentas + rotación al agotarse. Comparte las sesiones con Claude Code nativo (mismo almacén local), así puedes continuar aquí un chat de allá y viceversa.",
             "Full (recomendado con una sola cuenta de Claude.ai): tu login por defecto de Claude, usa el saldo de tu suscripción. Integraciones de claude.ai, sin rotación. También comparte sesiones con el Claude Code nativo.",
@@ -107,7 +253,9 @@
         },
         "keyRotator.chatExtraArgs": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Opcional: argumentos extra para el CLI claude del chat (ej: [\"--plugin-dir\", \"C:/ruta/plugin\", \"--add-dir\", \"C:/proyecto\"]). Útil para cargar skills/plugins/agents propios en modo API."
         }
@@ -123,9 +271,12 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
     "esbuild": "^0.21.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.4.0",
-    "@vscode/vsce": "^2.24.0"
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.1"
   }
 }

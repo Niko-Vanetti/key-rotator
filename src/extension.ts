@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
+import * as childProcess from 'node:child_process';
+import * as readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import type { Account, AccountMeta, HistoryEntry } from './types.js';
 import { KeyManager } from './storage/keyManager.js';
@@ -14,6 +16,7 @@ import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
+import { WebChatRunner } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
@@ -224,6 +227,96 @@ export function activate(context: vscode.ExtensionContext) {
   const getPreferredId = (): string | undefined => context.globalState.get<string>(PREFERRED_KEY);
   const setPreferredId = (id: string | undefined) => context.globalState.update(PREFERRED_KEY, id);
 
+  // --- web-chat accounts (DeepSeek, … driven via a headless browser) --------
+  // Provider id is `<key>-web` (e.g. 'deepseek-web'); the daemon's provider key
+  // is that without the suffix.
+  const isWebProvider = (provider: string): boolean => provider.endsWith('-web');
+  const webProviderKey = (provider: string): string => provider.replace(/-web$/, '');
+  const webProfileDir = (accountId: string): string => {
+    const dir = vscode.Uri.joinPath(context.globalStorageUri, 'web-profiles', accountId).fsPath;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // best-effort
+    }
+    return dir;
+  };
+  const webDaemonPath = vscode.Uri.joinPath(
+    context.extensionUri,
+    'src',
+    'ui',
+    'media',
+    'web-chat',
+    'bridge.mjs'
+  ).fsPath;
+  const webRunners = new Map<string, WebChatRunner>();
+  const getWebRunner = (accountId: string, provider: string, profile: string): WebChatRunner => {
+    let r = webRunners.get(accountId);
+    if (!r) {
+      r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile);
+      webRunners.set(accountId, r);
+    }
+    return r;
+  };
+
+  /**
+   * Open the headed browser so the user signs in once for a web account. Runs
+   * the daemon's `login` command in a dedicated process (the persistent
+   * profile can't be open headless and headed at once, so we tear down any
+   * cached runner first and reopen it afterwards).
+   */
+  async function startWebLogin(accountId: string, provider: string, label: string): Promise<void> {
+    const existing = webRunners.get(accountId);
+    if (existing) {
+      existing.dispose();
+      webRunners.delete(accountId);
+    }
+    const dir = webProfileDir(accountId);
+    const key = webProviderKey(provider);
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Abriendo navegador para iniciar sesión en "${label}"…`, cancellable: false },
+      () =>
+        new Promise<void>((resolve) => {
+          const child = childProcess.spawn(process.execPath, [webDaemonPath, key, dir], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+          });
+          const rl = readline.createInterface({ input: child.stdout });
+          let started = false;
+          rl.on('line', (line) => {
+            let o: { type?: string; ok?: boolean; message?: string };
+            try {
+              o = JSON.parse(line);
+            } catch {
+              return;
+            }
+            if (o.type === 'ready' && !started) {
+              started = true;
+              child.stdin.write(JSON.stringify({ cmd: 'login' }) + '\n');
+            } else if (o.type === 'login') {
+              vscode.window.showInformationMessage(
+                o.ok
+                  ? `"${label}": sesión iniciada. Ya puedes chatear con esta cuenta en KeyRotator.`
+                  : `"${label}": no se completó el inicio de sesión. Vuelve a intentarlo con "Iniciar sesión (cuenta web)".`
+              );
+              child.stdin.write(JSON.stringify({ cmd: 'quit' }) + '\n');
+              setTimeout(() => child.kill(), 1500);
+              resolve();
+            } else if (o.type === 'fatal' || o.type === 'error') {
+              vscode.window.showErrorMessage(`KeyRotator (web): ${o.message ?? 'error'}`);
+              child.kill();
+              resolve();
+            }
+          });
+          child.on('error', (e) => {
+            vscode.window.showErrorMessage(`KeyRotator (web): no se pudo abrir el navegador — ${e.message}`);
+            resolve();
+          });
+          child.on('exit', () => resolve());
+        })
+    );
+  }
+
   const sortedActiveAnthropic = (): AccountMeta[] => {
     const list = keyManager
       .getAllMeta()
@@ -241,6 +334,19 @@ export function activate(context: vscode.ExtensionContext) {
   /** Resolve the account/credential the next turn should use. */
   async function resolveActiveChatAccount(preferredId?: string | null): Promise<ActiveAccount | null> {
     const mode = getChatMode();
+
+    // A panel pinned to a web account (DeepSeek, …) always uses the browser
+    // daemon, independent of chatMode (which only governs the Claude paths).
+    if (preferredId) {
+      const pinned = keyManager.getAllMeta().find((a) => a.id === preferredId);
+      if (pinned && isWebProvider(pinned.provider)) {
+        return {
+          id: pinned.id,
+          label: pinned.label,
+          web: { provider: webProviderKey(pinned.provider), profileDir: webProfileDir(pinned.id) },
+        };
+      }
+    }
 
     // Full mode: the user's default logged-in Claude — managed MCPs, single
     // account, no rotation.
@@ -429,15 +535,22 @@ export function activate(context: vscode.ExtensionContext) {
       return prior && prior.length > 0 ? prior : FALLBACK_MODELS;
     },
     listChatAccounts: () => {
-      // In 'full' mode the chat always uses the user's login (subscription),
-      // so per-account switching doesn't apply — hide the picker.
-      if (getChatMode() === 'full') return [];
+      // Web accounts (DeepSeek, …) are always switchable regardless of chatMode.
+      const web = keyManager
+        .getAllMeta()
+        .filter((a) => isWebProvider(a.provider))
+        .map((a) => ({ id: a.id, label: a.label, active: false }));
+      // In 'full' mode the Claude side always uses the user's login, so only
+      // the web accounts are worth listing.
+      if (getChatMode() === 'full') return web;
       const activeId = sortedActiveAnthropic()[0]?.id;
-      return keyManager
+      const claude = keyManager
         .getAllMeta()
         .filter((a) => a.provider === CHAT_PROVIDER)
         .map((a) => ({ id: a.id, label: a.label, active: a.id === activeId }));
+      return [...claude, ...web];
     },
+    getWebRunner,
   };
 
   const activeChatAccountLabel = (): string => {
@@ -618,12 +731,14 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // "Add Account (Login)": one click = pick a provider, create the account,
-    // and open the browser to log in — no API key needed. Provider list is
-    // intentionally an array so Gemini/Qwen/etc. can be added later once
-    // their CLIs support an equivalent browser-login flow.
+    // and open the browser to log in — no API key needed. Claude uses the CLI
+    // OAuth; web providers (DeepSeek, …) drive their web chat in a browser.
+    // The list is an array so more web chats can be added once verified.
     vscode.commands.registerCommand('keyRotator.addLoginAccount', async () => {
-      const LOGIN_PROVIDERS: { label: string; description: string; id: string; envVar: string }[] = [
-        { label: '$(sparkle) Claude (Claude.ai)', description: 'Usa tu suscripción — abre el navegador para iniciar sesión', id: CHAT_PROVIDER, envVar: 'ANTHROPIC_API_KEY' },
+      type LoginProvider = { label: string; description: string; id: string; flow: 'claude' | 'web' };
+      const LOGIN_PROVIDERS: LoginProvider[] = [
+        { label: '$(sparkle) Claude (Claude.ai)', description: 'Usa tu suscripción — abre el navegador para iniciar sesión', id: CHAT_PROVIDER, flow: 'claude' },
+        { label: '$(globe) DeepSeek (web)', description: 'Chat web de DeepSeek (V4) sin API — inicia sesión una vez en el navegador', id: 'deepseek-web', flow: 'web' },
       ];
       const picked = await vscode.window.showQuickPick(LOGIN_PROVIDERS, {
         placeHolder: '¿Qué cuenta quieres agregar?',
@@ -632,12 +747,31 @@ export function activate(context: vscode.ExtensionContext) {
 
       const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === picked.id);
       const id = randomUUID();
+
+      if (picked.flow === 'web') {
+        const defaultName = `${webProviderKey(picked.id).replace(/^\w/, (c) => c.toUpperCase())} (cuenta ${sameProvider.length + 1})`;
+        await keyManager.addAccount({
+          id,
+          provider: picked.id,
+          label: defaultName,
+          apiKey: '',
+          envVar: '',
+          priority: sameProvider.length + 1,
+          switchMode: 'confirm',
+          status: 'active',
+        });
+        refreshUI();
+        ChatPanel.refreshIfOpen();
+        await startWebLogin(id, picked.id, defaultName);
+        return;
+      }
+
       await keyManager.addAccount({
         id,
         provider: picked.id,
         label: `Claude (cuenta ${sameProvider.length + 1})`,
         apiKey: '',
-        envVar: picked.envVar,
+        envVar: 'ANTHROPIC_API_KEY',
         priority: sameProvider.length + 1,
         switchMode: 'confirm',
         status: 'active',
@@ -665,6 +799,28 @@ export function activate(context: vscode.ExtensionContext) {
       );
       refreshUI();
       ChatPanel.refreshIfOpen();
+    }),
+
+    // Open the web-login browser for a web account (DeepSeek, …): a real,
+    // headed Chromium window where the user signs in once; the session is
+    // saved in the account's persistent profile.
+    vscode.commands.registerCommand('keyRotator.webChatLogin', async (node?: { account?: AccountMeta }) => {
+      let meta = node?.account;
+      if (!meta || !isWebProvider(meta.provider)) {
+        const webAccts = keyManager.getAllMeta().filter((a) => isWebProvider(a.provider));
+        if (webAccts.length === 0) {
+          vscode.window.showInformationMessage('KeyRotator: agrega primero una cuenta web (DeepSeek) con "Add Account (Login)".');
+          return;
+        }
+        const picked = await vscode.window.showQuickPick(
+          webAccts.map((a) => ({ label: a.label, description: a.provider, id: a.id, provider: a.provider })),
+          { placeHolder: '¿En qué cuenta web quieres iniciar sesión?' }
+        );
+        if (!picked) return;
+        meta = webAccts.find((a) => a.id === picked.id);
+      }
+      if (!meta) return;
+      await startWebLogin(meta.id, meta.provider, meta.label);
     }),
 
     vscode.commands.registerCommand('keyRotator.activateAccount', async (node?: { account?: AccountMeta }) => {
@@ -774,6 +930,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(healthCheckDisposable);
+
+  // Tear down any web-chat browser daemons when the extension unloads.
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      for (const r of webRunners.values()) r.dispose();
+      webRunners.clear();
+    })
+  );
 
   // --- registry refresh ---------------------------------------------------
 

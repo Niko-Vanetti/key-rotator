@@ -163,6 +163,7 @@ const expectedCommands = [
   'keyRotator.moveAccountDown',
   'keyRotator.testAccount',
   'keyRotator.loginProfile',
+  'keyRotator.webChatLogin',
   'keyRotator.addAccount',
   'keyRotator.addLoginAccount',
   'keyRotator.activateAccount',
