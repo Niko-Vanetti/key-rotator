@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { execSync } from 'node:child_process';
 
 const PROVIDER = process.argv[2] || 'deepseek';
 const PROFILE = process.argv[3];
@@ -48,10 +49,66 @@ if (!CFG) {
   process.exit(2);
 }
 
-// --- chromium discovery ---------------------------------------------------
-function findChromium() {
-  if (process.env.PW_CHROMIUM && fs.existsSync(process.env.PW_CHROMIUM)) return process.env.PW_CHROMIUM;
-  const root = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'ms-playwright');
+// --- browser discovery ----------------------------------------------------
+// We need a browser Playwright can drive. Prefer the user's own installed
+// Chromium browser (so it's "their" browser, not a separate test Chromium),
+// honoring their default; bundled Playwright Chromium is the last resort.
+const firstExisting = (...cands) => cands.find((p) => p && fs.existsSync(p)) || null;
+const PF = process.env['ProgramFiles'] || 'C:\\Program Files';
+const PFx86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+const LAD = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+
+// Known Chromium-family browsers and where their executables live (Windows).
+const BROWSERS = {
+  'opera-gx': () => firstExisting(path.join(LAD, 'Programs', 'Opera GX', 'opera.exe')),
+  opera: () => firstExisting(path.join(LAD, 'Programs', 'Opera', 'opera.exe')),
+  msedge: () =>
+    firstExisting(
+      path.join(PFx86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(PF, 'Microsoft', 'Edge', 'Application', 'msedge.exe')
+    ),
+  brave: () =>
+    firstExisting(
+      path.join(PF, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+      path.join(LAD, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe')
+    ),
+  vivaldi: () => firstExisting(path.join(LAD, 'Vivaldi', 'Application', 'vivaldi.exe')),
+  chrome: () =>
+    firstExisting(
+      path.join(PF, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(PFx86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(LAD, 'Google', 'Chrome', 'Application', 'chrome.exe')
+    ),
+};
+
+// Windows default-browser ProgId -> our browser key.
+const PROGID_MAP = [
+  [/Opera.*GX/i, 'opera-gx'],
+  [/Opera/i, 'opera'],
+  [/MSEdge/i, 'msedge'],
+  [/Brave/i, 'brave'],
+  [/Vivaldi/i, 'vivaldi'],
+  [/Chrome/i, 'chrome'],
+];
+
+function defaultBrowserKey() {
+  try {
+    const out = execSync(
+      'reg query "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice" /v ProgId',
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const m = /ProgId\s+REG_SZ\s+(\S+)/i.exec(out);
+    if (m) {
+      for (const [rx, key] of PROGID_MAP) if (rx.test(m[1])) return key;
+    }
+  } catch {
+    /* no default detectable */
+  }
+  return null;
+}
+
+function bundledChromium() {
+  const root = path.join(LAD, 'ms-playwright');
   let best = null;
   let bestN = -1;
   try {
@@ -62,7 +119,6 @@ function findChromium() {
         path.join(root, d, 'chrome-win64', 'chrome.exe'),
         path.join(root, d, 'chrome-win', 'chrome.exe'),
         path.join(root, d, 'chrome-linux', 'chrome'),
-        path.join(root, d, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
       ]) {
         if (fs.existsSync(exe) && Number(m[1]) > bestN) {
           best = exe;
@@ -71,9 +127,37 @@ function findChromium() {
       }
     }
   } catch {
-    /* no cache dir */
+    /* no cache */
   }
   return best;
+}
+
+// Resolve which browser to launch. `pref` comes from the KeyRotator setting
+// (env KR_WEB_BROWSER): 'auto', a known key, or an absolute exe path.
+function findBrowser() {
+  if (process.env.PW_CHROMIUM && fs.existsSync(process.env.PW_CHROMIUM)) return process.env.PW_CHROMIUM;
+  const pref = (process.env.KR_WEB_BROWSER || 'auto').trim();
+  if (pref && pref !== 'auto') {
+    if (/[\\/]/.test(pref) && fs.existsSync(pref)) return pref; // explicit path
+    if (BROWSERS[pref]) {
+      const p = BROWSERS[pref]();
+      if (p) return p;
+    }
+  }
+  // Auto: the OS default browser, if it's a Chromium we can drive…
+  const def = defaultBrowserKey();
+  if (def && BROWSERS[def]) {
+    const p = BROWSERS[def]();
+    if (p) return p;
+  }
+  // …else the first installed real browser (Chrome last, since it's often the
+  // one people keep only for testing)…
+  for (const key of ['opera-gx', 'opera', 'msedge', 'brave', 'vivaldi', 'chrome']) {
+    const p = BROWSERS[key]();
+    if (p) return p;
+  }
+  // …else the bundled Playwright Chromium.
+  return bundledChromium();
 }
 
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -87,10 +171,14 @@ async function ensure(headless) {
     await cur.ctx.close().catch(() => {});
     cur = null;
   }
-  const exe = findChromium();
+  const exe = findBrowser();
   if (!exe) {
-    send({ type: 'error', message: 'No encontré Chromium de Playwright. Ejecuta: npx playwright install chromium' });
-    throw new Error('no chromium');
+    send({
+      type: 'error',
+      message:
+        'No encontré un navegador Chromium (Opera/Edge/Brave/Chrome) ni el Chromium de Playwright. Instala uno o ejecuta: npx playwright install chromium',
+    });
+    throw new Error('no browser');
   }
   const ctx = await chromium.launchPersistentContext(PROFILE, {
     headless,

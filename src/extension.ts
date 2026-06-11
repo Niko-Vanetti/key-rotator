@@ -249,11 +249,13 @@ export function activate(context: vscode.ExtensionContext) {
     'web-chat',
     'bridge.mjs'
   ).fsPath;
+  const getWebBrowserPref = (): string =>
+    vscode.workspace.getConfiguration('keyRotator').get<string>('webChatBrowser', 'auto') || 'auto';
   const webRunners = new Map<string, WebChatRunner>();
   const getWebRunner = (accountId: string, provider: string, profile: string): WebChatRunner => {
     let r = webRunners.get(accountId);
     if (!r) {
-      r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile);
+      r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile, getWebBrowserPref());
       webRunners.set(accountId, r);
     }
     return r;
@@ -279,7 +281,7 @@ export function activate(context: vscode.ExtensionContext) {
         new Promise<void>((resolve) => {
           const child = childProcess.spawn(process.execPath, [webDaemonPath, key, dir], {
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', KR_WEB_BROWSER: getWebBrowserPref() },
           });
           const rl = readline.createInterface({ input: child.stdout });
           let started = false;
@@ -936,6 +938,16 @@ export function activate(context: vscode.ExtensionContext) {
     new vscode.Disposable(() => {
       for (const r of webRunners.values()) r.dispose();
       webRunners.clear();
+    })
+  );
+
+  // Changing the web browser preference rebuilds runners with the new browser.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('keyRotator.webChatBrowser')) {
+        for (const r of webRunners.values()) r.dispose();
+        webRunners.clear();
+      }
     })
   );
 

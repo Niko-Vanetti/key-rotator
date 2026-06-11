@@ -258,6 +258,21 @@
           },
           "default": [],
           "description": "Opcional: argumentos extra para el CLI claude del chat (ej: [\"--plugin-dir\", \"C:/ruta/plugin\", \"--add-dir\", \"C:/proyecto\"]). Útil para cargar skills/plugins/agents propios en modo API."
+        },
+        "keyRotator.webChatBrowser": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "opera-gx", "opera", "msedge", "brave", "vivaldi", "chrome"],
+          "enumDescriptions": [
+            "Auto: usa tu navegador por defecto si es Chromium (Opera/Edge/Brave/Vivaldi/Chrome); Chrome es la última opción y el Chromium de Playwright el último recurso.",
+            "Opera GX",
+            "Opera",
+            "Microsoft Edge",
+            "Brave",
+            "Vivaldi",
+            "Google Chrome"
+          ],
+          "description": "Qué navegador usa el chat web (DeepSeek, …). 'auto' respeta tu navegador por defecto. También acepta una ruta absoluta a un .exe de un navegador Chromium. Debe ser un navegador basado en Chromium (Firefox no es compatible con esta automatización)."
         }
       }
     }

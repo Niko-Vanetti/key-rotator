@@ -88,6 +88,7 @@ const vscodeMock = {
     getConfiguration: () => ({
       get: (_key, fallback) => fallback,
     }),
+    onDidChangeConfiguration: () => ({ dispose() {} }),
     workspaceFolders: undefined,
     fs: {
       readFile: async () => {
