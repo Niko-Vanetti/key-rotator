@@ -588,18 +588,28 @@ export function activate(context: vscode.ExtensionContext) {
       }
       if (!picked) return;
 
+      // Optional: pre-fill the email on the OAuth page so the browser opens
+      // straight to the right Google/Anthropic account (helpful for the 2nd+
+      // profile, where the browser may already have another account active).
+      const email = await vscode.window.showInputBox({
+        prompt: `Email de la cuenta de Claude.ai para "${picked.label}" (opcional)`,
+        placeHolder: 'tu-correo@gmail.com — déjalo vacío para elegir en el navegador',
+      });
+
       // Open a terminal scoped to this account's CLAUDE_CONFIG_DIR and run the
-      // interactive login. The OAuth credential is stored only in that dir, so
-      // each account keeps its own login + claude.ai-managed MCPs.
+      // CLI login. `claude auth login` opens the browser automatically; the
+      // OAuth credential is stored only in this dir, so each account keeps
+      // its own login + claude.ai-managed MCPs.
       const dir = profileDir(picked.id);
       const terminal = vscode.window.createTerminal({
         name: `KeyRotator login: ${picked.label}`,
         env: { CLAUDE_CONFIG_DIR: dir },
       });
       terminal.show();
-      terminal.sendText('claude /login');
+      const cmd = email?.trim() ? `claude auth login --claudeai --email "${email.trim()}"` : 'claude auth login --claudeai';
+      terminal.sendText(cmd);
       vscode.window.showInformationMessage(
-        `Iniciando sesión para "${picked.label}". Completa el login en el navegador; cuando termine, ya puedes usar el chat con esta cuenta.`
+        `"${picked.label}": se abrirá tu navegador para iniciar sesión. Cuando termines ahí, vuelve a esta terminal — puede pedirte pegar un código.`
       );
     }),
 
