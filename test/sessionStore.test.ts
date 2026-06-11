@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseCustomTitle, parseCwd, parseHistory } from '../src/chat/sessionStore.ts';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { parseCustomTitle, parseCwd, parseHistory, syncSessionIntoStore } from '../src/chat/sessionStore.ts';
 
 const lines = (objs: unknown[]) => objs.map((o) => JSON.stringify(o));
 
@@ -51,4 +54,53 @@ test('parseHistory handles array and string content', () => {
     { role: 'user', text: 'array form' },
     { role: 'assistant', text: 'string form' },
   ]);
+});
+
+// ---- syncSessionIntoStore (profiles mode shares sessions across stores) ----
+
+const SESSION = '11111111-2222-3333-4444-555555555555';
+const SLUG = 'C--Users-Niko-Vanetti';
+
+function makeHome(content?: string, mtimeSec?: number): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-store-'));
+  if (content !== undefined) {
+    const dir = path.join(home, 'projects', SLUG);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${SESSION}.jsonl`);
+    fs.writeFileSync(file, content);
+    if (mtimeSec !== undefined) fs.utimesSync(file, mtimeSec, mtimeSec);
+  }
+  return home;
+}
+
+test('syncSessionIntoStore copies a shared-store session into an empty profile store', () => {
+  const shared = makeHome('{"cwd":"x"}\n');
+  const profile = makeHome();
+  assert.strictEqual(syncSessionIntoStore(SESSION, profile, [shared]), true);
+  const copied = path.join(profile, 'projects', SLUG, `${SESSION}.jsonl`);
+  assert.strictEqual(fs.readFileSync(copied, 'utf8'), '{"cwd":"x"}\n');
+});
+
+test('syncSessionIntoStore overwrites an older target copy with the newest one', () => {
+  const now = Date.now() / 1000;
+  const shared = makeHome('NEWER\n', now);
+  const profile = makeHome('older\n', now - 3600);
+  assert.strictEqual(syncSessionIntoStore(SESSION, profile, [shared]), true);
+  const file = path.join(profile, 'projects', SLUG, `${SESSION}.jsonl`);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'NEWER\n');
+});
+
+test('syncSessionIntoStore leaves the target alone when it already has the newest copy', () => {
+  const now = Date.now() / 1000;
+  const shared = makeHome('stale\n', now - 3600);
+  const profile = makeHome('FRESH\n', now);
+  assert.strictEqual(syncSessionIntoStore(SESSION, profile, [shared]), true);
+  const file = path.join(profile, 'projects', SLUG, `${SESSION}.jsonl`);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'FRESH\n');
+});
+
+test('syncSessionIntoStore returns false when the session exists nowhere', () => {
+  const shared = makeHome();
+  const profile = makeHome();
+  assert.strictEqual(syncSessionIntoStore(SESSION, profile, [shared]), false);
 });

@@ -688,8 +688,32 @@ export function activate(context: vscode.ExtensionContext) {
       refreshUI();
     }),
 
-    vscode.commands.registerCommand('keyRotator.editAccount', () => {
-      DashboardPanel.createOrShow(context.extensionUri, dashboardCallbacks);
+    vscode.commands.registerCommand('keyRotator.editAccount', async (node?: { account?: AccountMeta }) => {
+      let meta = node?.account;
+      if (!meta) {
+        const all = keyManager.getAllMeta();
+        if (all.length === 0) {
+          DashboardPanel.createOrShow(context.extensionUri, dashboardCallbacks);
+          return;
+        }
+        const picked = await vscode.window.showQuickPick(
+          all.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
+          { placeHolder: '¿Qué cuenta quieres renombrar?' }
+        );
+        if (!picked) return;
+        meta = all.find((a) => a.id === picked.id);
+      }
+      if (!meta) return;
+      const name = await vscode.window.showInputBox({
+        prompt: `Nuevo nombre para "${meta.label}"`,
+        value: meta.label,
+        validateInput: (v) => (v.trim() ? undefined : 'El nombre no puede estar vacío'),
+      });
+      if (name === undefined) return;
+      await keyManager.updateAccountMeta(meta.id, { label: name.trim() });
+      refreshUI();
+      ChatPanel.refreshIfOpen();
+      DashboardPanel.refreshIfOpen();
     }),
 
     vscode.commands.registerCommand('keyRotator.reportRateLimit', async () => {

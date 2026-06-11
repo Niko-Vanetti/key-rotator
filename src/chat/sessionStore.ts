@@ -235,6 +235,62 @@ export function loadSession(
   return null;
 }
 
+/** Other profiles' config homes (siblings of `configDir`), for cross-profile sync. */
+export function siblingProfileHomes(configDir: string): string[] {
+  const parent = path.dirname(configDir);
+  try {
+    return fs
+      .readdirSync(parent, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => path.join(parent, e.name))
+      .filter((p) => p !== configDir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Make sure `sessionId`'s transcript exists — and is the freshest copy — in
+ * the store under `targetHome` (a CLAUDE_CONFIG_DIR). Profiles mode keeps one
+ * store per account, so continuing a conversation that lives in the shared
+ * store (or another profile) requires copying the .jsonl over before
+ * `--resume`, otherwise claude fails with "No conversation found".
+ * Returns true when the session is available in the target afterwards.
+ */
+export function syncSessionIntoStore(sessionId: string, targetHome: string, searchHomes: string[]): boolean {
+  type Copy = { filePath: string; mtime: number; slug: string; home: string };
+  const copies: Copy[] = [];
+  for (const home of [targetHome, ...searchHomes]) {
+    const root = path.join(home, 'projects');
+    let dirs: string[];
+    try {
+      dirs = fs.readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const d of dirs) {
+      const filePath = path.join(root, d, `${sessionId}.jsonl`);
+      try {
+        copies.push({ filePath, mtime: fs.statSync(filePath).mtimeMs, slug: d, home });
+      } catch {
+        // not in this store
+      }
+    }
+  }
+  if (copies.length === 0) return false;
+  const newest = copies.reduce((a, b) => (b.mtime > a.mtime ? b : a));
+  if (newest.home === targetHome) return true; // target already has the freshest copy
+  const destDir = path.join(targetHome, 'projects', newest.slug);
+  try {
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.copyFileSync(newest.filePath, path.join(destDir, `${sessionId}.jsonl`));
+    return true;
+  } catch {
+    // best-effort: claude will surface a clear error if the copy failed
+    return copies.some((c) => c.home === targetHome);
+  }
+}
+
 /** Async variant — reads off the event loop so the UI never blocks. */
 export async function loadSessionAsync(
   id: string,

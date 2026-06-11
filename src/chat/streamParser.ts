@@ -60,14 +60,20 @@ export function classifyEvent(obj: unknown): ChatEvent {
     case 'rate_limit_event':
       return { kind: 'rateLimit', info: (o.rate_limit_info ?? {}) as Record<string, unknown> };
 
-    case 'result':
+    case 'result': {
+      // error_during_execution results carry no `result` field, only an
+      // `errors` array (e.g. "No conversation found with session ID: …").
+      const fallback = Array.isArray(o.errors)
+        ? o.errors.filter((e: unknown) => typeof e === 'string').join(' · ')
+        : '';
       return {
         kind: 'result',
         isError: o.is_error === true,
         sessionId: String(o.session_id ?? ''),
-        text: typeof o.result === 'string' ? o.result : '',
+        text: typeof o.result === 'string' ? o.result : fallback,
         raw: o,
       };
+    }
 
     default:
       return { kind: 'other' };

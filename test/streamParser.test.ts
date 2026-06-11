@@ -59,6 +59,24 @@ test('classifies a successful result', () => {
   }
 });
 
+test('error result without result text falls back to the errors array', () => {
+  // Real shape from `claude -p --resume <missing id>`: error_during_execution
+  // carries no `result` field — only `errors: [...]`. The UI must show that
+  // instead of "desconocido".
+  const ev = classifyEvent({
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    session_id: 's9',
+    errors: ['No conversation found with session ID: abc'],
+  });
+  assert.strictEqual(ev.kind, 'result');
+  if (ev.kind === 'result') {
+    assert.strictEqual(ev.isError, true);
+    assert.strictEqual(ev.text, 'No conversation found with session ID: abc');
+  }
+});
+
 test('rate_limit_event with allowed status is not a block', () => {
   const ev = classifyEvent({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } });
   assert.strictEqual(ev.kind, 'rateLimit');

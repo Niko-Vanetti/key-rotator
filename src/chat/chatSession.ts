@@ -7,7 +7,7 @@ import {
   isLimitMessageText,
   isNotLoggedIn,
 } from './streamParser.js';
-import type { SessionSummary, ChatMessage } from './sessionStore.js';
+import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -158,6 +158,16 @@ export class ChatSession {
         const outcome = await this.runTurn(text, account, handlers);
 
         if (outcome.kind === 'ok') {
+          // Profiles mode writes the transcript to the account's isolated
+          // store; mirror it back to the shared store so the Chats sidebar
+          // and native Claude Code keep seeing/continuing this conversation.
+          if (account.configDir && this.sessionId) {
+            try {
+              syncSessionIntoStore(this.sessionId, defaultHome(), [account.configDir]);
+            } catch {
+              // best-effort
+            }
+          }
           handlers.onDone(outcome.text);
           return;
         }
@@ -219,6 +229,19 @@ export class ChatSession {
       const { command, baseArgs, useShell } = this.backend.getLauncher();
       const args = [...baseArgs, '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'];
       if (this.sessionId) {
+        // Profiles mode uses an isolated session store per account; pull the
+        // freshest transcript in from the shared store / other profiles so
+        // --resume finds it (otherwise: "No conversation found").
+        if (account.configDir) {
+          try {
+            syncSessionIntoStore(this.sessionId, account.configDir, [
+              defaultHome(),
+              ...siblingProfileHomes(account.configDir),
+            ]);
+          } catch {
+            // best-effort; claude will report a clear error if missing
+          }
+        }
         args.push('--resume', this.sessionId);
       }
       const model = this.modelOverride ?? this.backend.getModel();
