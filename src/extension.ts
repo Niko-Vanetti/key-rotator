@@ -617,6 +617,56 @@ export function activate(context: vscode.ExtensionContext) {
       DashboardPanel.createOrShow(context.extensionUri, dashboardCallbacks);
     }),
 
+    // "Add Account (Login)": one click = pick a provider, create the account,
+    // and open the browser to log in — no API key needed. Provider list is
+    // intentionally an array so Gemini/Qwen/etc. can be added later once
+    // their CLIs support an equivalent browser-login flow.
+    vscode.commands.registerCommand('keyRotator.addLoginAccount', async () => {
+      const LOGIN_PROVIDERS: { label: string; description: string; id: string; envVar: string }[] = [
+        { label: '$(sparkle) Claude (Claude.ai)', description: 'Usa tu suscripción — abre el navegador para iniciar sesión', id: CHAT_PROVIDER, envVar: 'ANTHROPIC_API_KEY' },
+      ];
+      const picked = await vscode.window.showQuickPick(LOGIN_PROVIDERS, {
+        placeHolder: '¿Qué cuenta quieres agregar?',
+      });
+      if (!picked) return;
+
+      const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === picked.id);
+      const id = randomUUID();
+      await keyManager.addAccount({
+        id,
+        provider: picked.id,
+        label: `Claude (cuenta ${sameProvider.length + 1})`,
+        apiKey: '',
+        envVar: picked.envVar,
+        priority: sameProvider.length + 1,
+        switchMode: 'confirm',
+        status: 'active',
+      });
+
+      // Login-only accounts only work in 'profiles' mode (isolated CLAUDE_CONFIG_DIR).
+      if (getChatMode() !== 'profiles') {
+        await vscode.workspace
+          .getConfiguration('keyRotator')
+          .update('chatMode', 'profiles', vscode.ConfigurationTarget.Global);
+      }
+
+      // Open a terminal scoped to this new account's CLAUDE_CONFIG_DIR. `claude
+      // auth login --claudeai` opens the browser automatically; once the user
+      // finishes there, the account is ready to use in chat.
+      const dir = profileDir(id);
+      const terminal = vscode.window.createTerminal({
+        name: `KeyRotator login: ${sameProvider.length + 1}`,
+        env: { CLAUDE_CONFIG_DIR: dir },
+      });
+      terminal.show();
+      terminal.sendText('claude auth login --claudeai');
+      vscode.window.showInformationMessage(
+        'KeyRotator: cuenta creada — se abrirá tu navegador para iniciar sesión. Cuando termines ahí, vuelve a esta terminal.'
+      );
+      refreshUI();
+      ChatPanel.refreshIfOpen();
+    }),
+
     vscode.commands.registerCommand('keyRotator.activateAccount', async (node?: { account?: AccountMeta }) => {
       const id = node?.account?.id;
       if (!id) return;

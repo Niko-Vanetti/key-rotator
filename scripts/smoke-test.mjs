@@ -164,6 +164,7 @@ const expectedCommands = [
   'keyRotator.testAccount',
   'keyRotator.loginProfile',
   'keyRotator.addAccount',
+  'keyRotator.addLoginAccount',
   'keyRotator.activateAccount',
   'keyRotator.disableAccount',
   'keyRotator.deleteAccount',

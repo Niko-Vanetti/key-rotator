@@ -193,6 +193,9 @@ export class ChatPanel {
       case 'addAccount':
         await vscode.commands.executeCommand('keyRotator.addAccount');
         break;
+      case 'addLoginAccount':
+        await vscode.commands.executeCommand('keyRotator.addLoginAccount');
+        break;
       case 'openDashboard':
         await vscode.commands.executeCommand('keyRotator.openDashboard');
         break;

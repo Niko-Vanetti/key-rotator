@@ -24,6 +24,7 @@
     },
     "commands": [
       { "command": "keyRotator.addAccount", "title": "KeyRotator: Add Account", "icon": "$(add)" },
+      { "command": "keyRotator.addLoginAccount", "title": "KeyRotator: Add Account (Login)", "icon": "$(sign-in)" },
       { "command": "keyRotator.editAccount", "title": "KeyRotator: Edit Account", "icon": "$(edit)" },
       { "command": "keyRotator.deleteAccount", "title": "KeyRotator: Delete Account", "icon": "$(trash)" },
       { "command": "keyRotator.activateAccount", "title": "KeyRotator: Activate Account", "icon": "$(check)" },
@@ -45,7 +46,8 @@
         { "command": "keyRotator.newChatSession", "when": "view == keyRotatorChats", "group": "navigation@0" },
         { "command": "keyRotator.openChat", "when": "view == keyRotatorChats", "group": "navigation@1" },
         { "command": "keyRotator.addAccount", "when": "view == keyRotatorAccounts", "group": "navigation@1" },
-        { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation@2" }
+        { "command": "keyRotator.addLoginAccount", "when": "view == keyRotatorAccounts", "group": "navigation@2" },
+        { "command": "keyRotator.openDashboard", "when": "view == keyRotatorAccounts", "group": "navigation@3" }
       ],
       "view/item/context": [
         { "command": "keyRotator.moveAccountUp", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline@1" },
