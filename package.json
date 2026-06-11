@@ -112,8 +112,8 @@
       },
       {
         "command": "keyRotator.testAccount",
-        "title": "KeyRotator: Probar cuenta (diagnóstico)",
-        "icon": "$(beaker)"
+        "title": "KeyRotator: Probar conexión",
+        "icon": "$(sync)"
       },
       {
         "command": "keyRotator.reportRateLimit",
@@ -164,25 +164,22 @@
           "group": "inline@2"
         },
         {
-          "command": "keyRotator.testAccount",
+          "command": "keyRotator.editAccount",
           "when": "view == keyRotatorAccounts && viewItem == account",
           "group": "inline@3"
         },
         {
-          "command": "keyRotator.activateAccount",
+          "command": "keyRotator.testAccount",
           "when": "view == keyRotatorAccounts && viewItem == account",
-          "group": "inline"
+          "group": "inline@4"
         },
         {
-          "command": "keyRotator.loginProfile",
-          "when": "view == keyRotatorAccounts && viewItem == account && config.keyRotator.chatMode == profiles"
+          "command": "keyRotator.deleteAccount",
+          "when": "view == keyRotatorAccounts && viewItem == account",
+          "group": "inline@5"
         },
         {
-          "command": "keyRotator.webChatLogin",
-          "when": "view == keyRotatorAccounts && viewItem == account"
-        },
-        {
-          "command": "keyRotator.editAccount",
+          "command": "keyRotator.activateAccount",
           "when": "view == keyRotatorAccounts && viewItem == account"
         },
         {
@@ -190,7 +187,11 @@
           "when": "view == keyRotatorAccounts && viewItem == account"
         },
         {
-          "command": "keyRotator.deleteAccount",
+          "command": "keyRotator.loginProfile",
+          "when": "view == keyRotatorAccounts && viewItem == account && config.keyRotator.chatMode == profiles"
+        },
+        {
+          "command": "keyRotator.webChatLogin",
           "when": "view == keyRotatorAccounts && viewItem == account"
         }
       ]

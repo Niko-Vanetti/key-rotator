@@ -16,7 +16,7 @@ import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
-import { WebChatRunner } from './chat/webChatRunner.js';
+import { WebChatRunner, WEB_CAPS } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
@@ -260,6 +260,42 @@ export function activate(context: vscode.ExtensionContext) {
     }
     return r;
   };
+
+  /**
+   * "Probar conexión" for a web account: confirm the login is live, then send a
+   * real "Hola" and pass if the chat replies with non-error text.
+   */
+  async function testWebAccount(meta: AccountMeta): Promise<{ ok: boolean; detail: string }> {
+    const runner = getWebRunner(meta.id, webProviderKey(meta.provider), webProfileDir(meta.id));
+    let ready: boolean;
+    try {
+      ready = await runner.isReady();
+    } catch (e) {
+      return { ok: false, detail: `no se pudo abrir el navegador (${(e as Error).message.slice(0, 50)})` };
+    }
+    if (!ready) {
+      return { ok: false, detail: 'sin sesión — usa "Iniciar sesión (cuenta web)"' };
+    }
+    return new Promise<{ ok: boolean; detail: string }>((resolve) => {
+      const timer = setTimeout(() => resolve({ ok: false, detail: 'sin respuesta (timeout)' }), 120000);
+      runner.send('Hola', {
+        onDelta: () => {},
+        onDone: (full) => {
+          clearTimeout(timer);
+          const t = full.trim();
+          resolve(t ? { ok: true, detail: `responde OK: "${t.slice(0, 40)}${t.length > 40 ? '…' : ''}"` } : { ok: false, detail: 'respuesta vacía' });
+        },
+        onError: (msg) => {
+          clearTimeout(timer);
+          resolve({ ok: false, detail: msg.slice(0, 80) });
+        },
+        onLoginNeeded: () => {
+          clearTimeout(timer);
+          resolve({ ok: false, detail: 'sin sesión iniciada' });
+        },
+      });
+    });
+  }
 
   /**
    * Open the headed browser so the user signs in once for a web account. Runs
@@ -553,6 +589,11 @@ export function activate(context: vscode.ExtensionContext) {
       return [...claude, ...web];
     },
     getWebRunner,
+    getWebCapsFor: (accountId: string) => {
+      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      if (!meta || !isWebProvider(meta.provider)) return null;
+      return WEB_CAPS[webProviderKey(meta.provider)] ?? null;
+    },
   };
 
   const activeChatAccountLabel = (): string => {
@@ -638,19 +679,26 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('keyRotator.testAccount', async (node?: { account?: AccountMeta }) => {
-      // Diagnose what the stored key can actually do right now.
-      let targets = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
-      if (node?.account?.id) targets = targets.filter((a) => a.id === node.account!.id);
+      // "Probar conexión": exercise whatever the account is hosted on right now.
+      // Web accounts (DeepSeek, …) get a real "Hola" turn in their browser and
+      // pass if the AI replies without an error; API accounts get a key/billing
+      // probe.
+      const all = keyManager.getAllMeta();
+      let targets = node?.account?.id
+        ? all.filter((a) => a.id === node.account!.id)
+        : all.filter((a) => a.provider === CHAT_PROVIDER || isWebProvider(a.provider));
       if (targets.length === 0) {
-        vscode.window.showInformationMessage('KeyRotator: no hay cuentas de Anthropic para probar.');
+        vscode.window.showInformationMessage('KeyRotator: no hay cuentas que probar.');
         return;
       }
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'KeyRotator: probando cuentas…' },
+        { location: vscode.ProgressLocation.Notification, title: 'KeyRotator: probando conexión…' },
         async (progress) => {
           for (const meta of targets) {
             progress.report({ message: meta.label });
-            const verdict = await diagnoseAccount(meta.id);
+            const verdict = isWebProvider(meta.provider)
+              ? await testWebAccount(meta)
+              : await diagnoseAccount(meta.id);
             await keyManager.updateAccountMeta(meta.id, {
               status: verdict.ok ? 'active' : 'error',
               lastError: verdict.ok ? undefined : verdict.detail,
@@ -659,6 +707,7 @@ export function activate(context: vscode.ExtensionContext) {
             void vscode.window.showInformationMessage(`${icon} ${meta.label}: ${verdict.detail}`);
           }
           refreshUI();
+          ChatPanel.refreshIfOpen();
         }
       );
     }),

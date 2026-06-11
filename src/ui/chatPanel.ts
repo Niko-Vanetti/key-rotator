@@ -7,6 +7,7 @@ interface IncomingMessage {
   text?: string;
   id?: string;
   value?: string;
+  on?: boolean;
 }
 
 /**
@@ -102,6 +103,29 @@ export class ChatPanel {
     return accounts.map((a) => ({ ...a, active: a.id === this.accountId }));
   }
 
+  /**
+   * Web accounts (DeepSeek, …) expose in-chat models + feature toggles instead
+   * of the Claude model/effort controls. Post them so the webview swaps the
+   * bottom-bar controls; for non-web accounts, tell it to show the Claude ones.
+   */
+  private postWebControls(): void {
+    const caps = this.backend.getWebCapsFor?.(this.accountId ?? '') ?? null;
+    if (!caps) {
+      this.post({ type: 'webControls', web: false });
+      return;
+    }
+    const model = caps.models[0]?.id ?? null;
+    this.session.setWebModel(model);
+    for (const t of caps.toggles) this.session.setWebToggle(t.id, false);
+    this.post({
+      type: 'webControls',
+      web: true,
+      models: caps.models,
+      toggles: caps.toggles,
+      selectedModel: model,
+    });
+  }
+
   /** Push models: cached list instantly, then network-refreshed in background. */
   private postModels(): void {
     const apply = async (models: { id: string; label: string }[]) => {
@@ -150,6 +174,7 @@ export class ChatPanel {
         this.post({ type: 'accounts', accounts: this.accountsForMenu() });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
         this.postModels();
+        this.postWebControls();
         if (this.pendingSessionId) {
           const id = this.pendingSessionId;
           this.pendingSessionId = null;
@@ -188,7 +213,17 @@ export class ChatPanel {
           this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: this.session.currentSessionId });
           this.post({ type: 'accounts', accounts: this.accountsForMenu() });
           this.postModels();
+          this.postWebControls();
         }
+        break;
+      case 'setWebModel': {
+        const v = (msg.value ?? '').trim();
+        this.session.setWebModel(v || null);
+        this.post({ type: 'model', model: v });
+        break;
+      }
+      case 'setWebToggle':
+        if (msg.id) this.session.setWebToggle(msg.id, !!msg.on);
         break;
       case 'addAccount':
         await vscode.commands.executeCommand('keyRotator.addAccount');

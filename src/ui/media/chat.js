@@ -10,6 +10,10 @@
   const chatTitleEl = $('chatTitle');
   const modelSelect = $('modelSelect');
   const effortSelect = $('effortSelect');
+  const claudeControls = $('claudeControls');
+  const webControls = $('webControls');
+  const webModelSelect = $('webModelSelect');
+  const webToggles = $('webToggles');
   const acctBtn = $('acctBtn');
   const acctMenu = $('acctMenu');
   const acctList = $('acctList');
@@ -233,6 +237,46 @@
   sendBtn.addEventListener('click', send);
   modelSelect.addEventListener('change', () => vscode.postMessage({ type: 'setModel', value: modelSelect.value }));
   effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));
+  webModelSelect.addEventListener('change', () => {
+    const opt = webModelSelect.options[webModelSelect.selectedIndex];
+    if (opt) activeModelEl.textContent = opt.textContent;
+    vscode.postMessage({ type: 'setWebModel', value: webModelSelect.value });
+  });
+
+  function renderWebControls(msg) {
+    if (!msg.web) {
+      webControls.classList.add('hidden');
+      claudeControls.classList.remove('hidden');
+      return;
+    }
+    // Web account (DeepSeek, …): swap in its in-chat models + feature toggles.
+    claudeControls.classList.add('hidden');
+    webControls.classList.remove('hidden');
+    webModelSelect.innerHTML = '';
+    (msg.models || []).forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.id; o.textContent = m.label;
+      webModelSelect.appendChild(o);
+    });
+    if (msg.selectedModel) webModelSelect.value = msg.selectedModel;
+    const selOpt = webModelSelect.options[webModelSelect.selectedIndex];
+    if (selOpt) activeModelEl.textContent = selOpt.textContent;
+    webToggles.innerHTML = '';
+    (msg.toggles || []).forEach((t) => {
+      const chip = document.createElement('button');
+      chip.className = 'toggle-chip';
+      chip.textContent = t.label;
+      chip.dataset.id = t.id;
+      chip.dataset.on = '0';
+      chip.addEventListener('click', () => {
+        const on = chip.dataset.on === '1' ? false : true;
+        chip.dataset.on = on ? '1' : '0';
+        chip.classList.toggle('on', on);
+        vscode.postMessage({ type: 'setWebToggle', id: t.id, on });
+      });
+      webToggles.appendChild(chip);
+    });
+  }
 
   window.addEventListener('message', (event) => {
     const msg = event.data;
@@ -251,6 +295,7 @@
         if (msg.selected) modelSelect.value = msg.selected;
         break;
       }
+      case 'webControls': renderWebControls(msg); break;
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'slash': slashCommands = msg.commands || []; break;
       case 'loading':

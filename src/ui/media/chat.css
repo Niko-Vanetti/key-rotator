@@ -132,6 +132,17 @@ body {
 }
 .spacer { flex: 1 1 auto; }
 .model-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-panel-border); white-space: nowrap; }
+.ctl-group { display: flex; align-items: center; gap: 12px; }
+.toggles { display: flex; align-items: center; gap: 6px; }
+.toggle-chip {
+  font-size: 11px; padding: 3px 9px; border-radius: 12px; cursor: pointer;
+  background: transparent; color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border); white-space: nowrap;
+}
+.toggle-chip.on {
+  background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+}
 
 /* ---------- Slash autocomplete ---------- */
 .slash-menu {

@@ -41,6 +41,19 @@ const PROVIDERS = {
     authPage: /sign_in|sign_up|forgot|reset|password|\/login|\/register/i,
     composer: 'textarea',
     reply: '.ds-assistant-message-main-content',
+    // In-chat models (role="radio" with data-model-type) and feature toggles
+    // (.ds-toggle-button with aria-pressed). Verified live on chat.deepseek.com.
+    models: [
+      { id: 'default', label: 'Instant' },
+      { id: 'expert', label: 'Experto' },
+      { id: 'vision', label: 'Visión' },
+    ],
+    modelRadio: (id) => `div[role="radio"][data-model-type="${id}"]`,
+    toggles: [
+      { id: 'deepthink', label: 'Pensamiento Profundo' },
+      { id: 'search', label: 'Búsqueda inteligente' },
+    ],
+    toggleSel: '.ds-toggle-button',
   },
 };
 const CFG = PROVIDERS[PROVIDER];
@@ -230,13 +243,42 @@ async function doLogin() {
   }
 }
 
-async function doSend(text) {
+// Apply the requested in-chat model + feature toggles before sending.
+async function applyOpts(page, opts) {
+  if (!opts) return;
+  if (opts.model && CFG.models && CFG.modelRadio) {
+    const radio = page.locator(CFG.modelRadio(opts.model)).first();
+    if (await radio.count()) {
+      if ((await radio.getAttribute('aria-checked')) !== 'true') {
+        await radio.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
+  }
+  if (opts.toggles && CFG.toggles && CFG.toggleSel) {
+    for (const tg of CFG.toggles) {
+      if (!(tg.id in opts.toggles)) continue;
+      const want = !!opts.toggles[tg.id];
+      const btn = page.locator(`${CFG.toggleSel}:has(span:text-is(${JSON.stringify(tg.label)}))`).first();
+      if (await btn.count()) {
+        const pressed = (await btn.getAttribute('aria-pressed')) === 'true';
+        if (pressed !== want) {
+          await btn.click().catch(() => {});
+          await page.waitForTimeout(200);
+        }
+      }
+    }
+  }
+}
+
+async function doSend(text, opts) {
   const { page } = await ensure(true);
   await gotoChat(page);
   if (isAuth(page.url()) || !(await hasComposer(page))) {
     send({ type: 'login_needed' });
     return;
   }
+  await applyOpts(page, opts);
   const composer = page.locator(CFG.composer).first();
   const replies = page.locator(CFG.reply);
   const before = await replies.count();
@@ -294,13 +336,22 @@ rl.on('line', (line) => {
     });
     return;
   }
+  if (msg.cmd === 'caps') {
+    send({ type: 'caps', provider: PROVIDER, models: CFG.models ?? [], toggles: CFG.toggles ?? [] });
+    return;
+  }
   chain = chain
     .then(async () => {
       if (msg.cmd === 'status') return doStatus();
       if (msg.cmd === 'login') return doLogin();
-      if (msg.cmd === 'send') return doSend(String(msg.text ?? ''));
+      if (msg.cmd === 'send') return doSend(String(msg.text ?? ''), msg.opts);
     })
     .catch((e) => send({ type: 'error', message: String(e?.message || e) }));
 });
 
-send({ type: 'ready', provider: PROVIDER });
+send({
+  type: 'ready',
+  provider: PROVIDER,
+  models: CFG.models ?? [],
+  toggles: CFG.toggles ?? [],
+});

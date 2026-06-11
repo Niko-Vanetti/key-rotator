@@ -13,6 +13,37 @@ export interface WebTurnHandlers {
   onLoginNeeded(): void;
 }
 
+/** In-chat model + feature toggles the web provider exposes (e.g. DeepSeek). */
+export interface WebCaps {
+  models: { id: string; label: string }[];
+  toggles: { id: string; label: string }[];
+}
+
+/** Per-turn selection of model + toggle states sent to the web chat. */
+export interface WebOpts {
+  model?: string;
+  toggles?: Record<string, boolean>;
+}
+
+/**
+ * Static capabilities per web provider, mirroring the daemon's PROVIDERS map
+ * (bridge.mjs). Used to build the chat UI without launching a browser. Keep in
+ * sync with the daemon — both were verified live against chat.deepseek.com.
+ */
+export const WEB_CAPS: Record<string, WebCaps> = {
+  deepseek: {
+    models: [
+      { id: 'default', label: 'Instant' },
+      { id: 'expert', label: 'Experto' },
+      { id: 'vision', label: 'Visión' },
+    ],
+    toggles: [
+      { id: 'deepthink', label: 'Pensamiento Profundo' },
+      { id: 'search', label: 'Búsqueda inteligente' },
+    ],
+  },
+};
+
 export class WebChatRunner {
   private child: ChildProcessWithoutNullStreams | null = null;
   private rl: readline.Interface | null = null;
@@ -20,6 +51,8 @@ export class WebChatRunner {
   /** Handlers for the in-flight `send`/`status` (serialized one at a time). */
   private active: WebTurnHandlers | null = null;
   private statusResolve: ((ready: boolean) => void) | null = null;
+  /** Models + toggles the provider supports, reported by the daemon on ready. */
+  private caps: WebCaps = { models: [], toggles: [] };
 
   constructor(
     private nodePath: string,
@@ -66,7 +99,15 @@ export class WebChatRunner {
   }
 
   private onLine(line: string, onReady: () => void): void {
-    let o: { type?: string; text?: string; ready?: boolean; ok?: boolean; message?: string };
+    let o: {
+      type?: string;
+      text?: string;
+      ready?: boolean;
+      ok?: boolean;
+      message?: string;
+      models?: { id: string; label: string }[];
+      toggles?: { id: string; label: string }[];
+    };
     try {
       o = JSON.parse(line);
     } catch {
@@ -74,6 +115,7 @@ export class WebChatRunner {
     }
     switch (o.type) {
       case 'ready':
+        this.caps = { models: o.models ?? [], toggles: o.toggles ?? [] };
         onReady();
         break;
       case 'delta':
@@ -123,15 +165,21 @@ export class WebChatRunner {
     });
   }
 
+  /** The provider's models + toggles (available once the daemon has started). */
+  async getCaps(): Promise<WebCaps> {
+    await this.ensure();
+    return this.caps;
+  }
+
   /** Send one user turn; streams deltas and resolves on done/error/login. */
-  async send(text: string, handlers: WebTurnHandlers): Promise<void> {
+  async send(text: string, handlers: WebTurnHandlers, opts?: WebOpts): Promise<void> {
     await this.ensure();
     if (this.active) {
       handlers.onError('Espera a que termine la respuesta anterior.');
       return;
     }
     this.active = handlers;
-    this.write({ cmd: 'send', text });
+    this.write({ cmd: 'send', text, opts: opts ?? {} });
   }
 
   dispose(): void {

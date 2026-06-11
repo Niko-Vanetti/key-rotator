@@ -8,7 +8,7 @@ import {
   isNotLoggedIn,
 } from './streamParser.js';
 import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
-import type { WebChatRunner } from './webChatRunner.js';
+import type { WebChatRunner, WebCaps } from './webChatRunner.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -73,6 +73,8 @@ export interface ChatBackend {
   listModels(accountId?: string | null): Promise<{ id: string; label: string }[]>;
   /** Get (or lazily create) the web-chat daemon runner for a web account. */
   getWebRunner?(accountId: string, provider: string, profileDir: string): WebChatRunner;
+  /** Static web caps (models+toggles) for an account, or null if not web. */
+  getWebCapsFor?(accountId: string): WebCaps | null;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */
@@ -103,6 +105,9 @@ export class ChatSession {
   private effortOverride: string | null = null;
   private accountOverride: string | null = null;
   private busy = false;
+  /** Web-chat selection (DeepSeek model + feature toggles), per panel. */
+  private webModel: string | null = null;
+  private webToggles: Record<string, boolean> = {};
 
   constructor(private backend: ChatBackend) {}
 
@@ -123,6 +128,25 @@ export class ChatSession {
   /** Override the effort level for subsequent turns ('' / null → default). */
   setEffort(effort: string | null): void {
     this.effortOverride = effort && effort.length > 0 ? effort : null;
+  }
+
+  /** Set the web-chat model (DeepSeek: default|expert|vision) for next turns. */
+  setWebModel(model: string | null): void {
+    this.webModel = model && model.length > 0 ? model : null;
+  }
+
+  /** Set one web feature toggle (DeepSeek: deepthink|search) on/off. */
+  setWebToggle(id: string, on: boolean): void {
+    this.webToggles = { ...this.webToggles, [id]: on };
+  }
+
+  /** Resolve the active account and, if it's a web account, its capabilities. */
+  async resolveWebCaps(): Promise<{ accountId: string; caps: WebCaps } | null> {
+    const account = await this.backend.resolveActiveAccount(this.accountOverride);
+    if (!account?.web) return null;
+    const runner = this.backend.getWebRunner?.(account.id, account.web.provider, account.web.profileDir);
+    if (!runner) return null;
+    return { accountId: account.id, caps: await runner.getCaps() };
   }
 
   get currentSessionId(): string | null {
@@ -239,23 +263,27 @@ export class ChatSession {
         return;
       }
       handlers.onModel(account.label);
-      void runner.send(text, {
-        onDelta: (t) => handlers.onDelta(t),
-        onDone: (full) => {
-          handlers.onDone(full);
-          resolve();
+      void runner.send(
+        text,
+        {
+          onDelta: (t) => handlers.onDelta(t),
+          onDone: (full) => {
+            handlers.onDone(full);
+            resolve();
+          },
+          onError: (t) => {
+            handlers.onError(t);
+            resolve();
+          },
+          onLoginNeeded: () => {
+            handlers.onError(
+              `La cuenta web "${account.label}" no tiene sesión iniciada. Usa "KeyRotator: Iniciar sesión (cuenta web)" para entrar una vez en el navegador.`
+            );
+            resolve();
+          },
         },
-        onError: (t) => {
-          handlers.onError(t);
-          resolve();
-        },
-        onLoginNeeded: () => {
-          handlers.onError(
-            `La cuenta web "${account.label}" no tiene sesión iniciada. Usa "KeyRotator: Iniciar sesión (cuenta web)" para entrar una vez en el navegador.`
-          );
-          resolve();
-        },
-      });
+        { model: this.webModel ?? undefined, toggles: this.webToggles }
+      );
     });
   }
 

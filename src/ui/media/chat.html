@@ -47,21 +47,32 @@
       </footer>
       <!-- Bottom controls (like native: model + effort + active model) -->
       <div class="bottom-bar">
-        <label class="ctl">
-          <span>Modelo</span>
-          <select id="modelSelect"><option value="">detectando…</option></select>
-        </label>
-        <label class="ctl">
-          <span>Esfuerzo</span>
-          <select id="effortSelect">
-            <option value="">Default</option>
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-            <option value="xhigh">xhigh</option>
-            <option value="max">max</option>
-          </select>
-        </label>
+        <!-- Claude controls (model + effort) -->
+        <span id="claudeControls" class="ctl-group">
+          <label class="ctl">
+            <span>Modelo</span>
+            <select id="modelSelect"><option value="">detectando…</option></select>
+          </label>
+          <label class="ctl">
+            <span>Esfuerzo</span>
+            <select id="effortSelect">
+              <option value="">Default</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+        </span>
+        <!-- Web-chat controls (DeepSeek model + feature toggles) -->
+        <span id="webControls" class="ctl-group hidden">
+          <label class="ctl">
+            <span>Modelo</span>
+            <select id="webModelSelect"></select>
+          </label>
+          <span id="webToggles" class="toggles"></span>
+        </span>
         <span class="spacer"></span>
         <span id="usageBadge" class="model-badge hidden" title="Cuándo se reinicia tu límite de uso"></span>
         <span id="activeModel" class="model-badge" title="Modelo en uso (reportado por Claude)">—</span>
