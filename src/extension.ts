@@ -232,8 +232,11 @@ export function activate(context: vscode.ExtensionContext) {
   // is that without the suffix.
   const isWebProvider = (provider: string): boolean => provider.endsWith('-web');
   const webProviderKey = (provider: string): string => provider.replace(/-web$/, '');
-  const webProfileDir = (accountId: string): string => {
-    const dir = vscode.Uri.joinPath(context.globalStorageUri, 'web-profiles', accountId).fsPath;
+  // Profile is keyed by PROVIDER (e.g. 'deepseek'), not account id: one web
+  // login per provider is reused by every account of that provider, so the
+  // single sign-in (their real DeepSeek session) just works.
+  const webProfileDir = (provider: string): string => {
+    const dir = vscode.Uri.joinPath(context.globalStorageUri, 'web-profiles', webProviderKey(provider)).fsPath;
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch {
@@ -251,12 +254,14 @@ export function activate(context: vscode.ExtensionContext) {
   ).fsPath;
   const getWebBrowserPref = (): string =>
     vscode.workspace.getConfiguration('keyRotator').get<string>('webChatBrowser', 'auto') || 'auto';
+  // Runners are cached by PROFILE dir (= provider), so two accounts of the same
+  // provider share one browser/daemon and never fight over the locked profile.
   const webRunners = new Map<string, WebChatRunner>();
-  const getWebRunner = (accountId: string, provider: string, profile: string): WebChatRunner => {
-    let r = webRunners.get(accountId);
+  const getWebRunner = (_accountId: string, provider: string, profile: string): WebChatRunner => {
+    let r = webRunners.get(profile);
     if (!r) {
       r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile, getWebBrowserPref());
-      webRunners.set(accountId, r);
+      webRunners.set(profile, r);
     }
     return r;
   };
@@ -266,7 +271,7 @@ export function activate(context: vscode.ExtensionContext) {
    * real "Hola" and pass if the chat replies with non-error text.
    */
   async function testWebAccount(meta: AccountMeta): Promise<{ ok: boolean; detail: string }> {
-    const runner = getWebRunner(meta.id, webProviderKey(meta.provider), webProfileDir(meta.id));
+    const runner = getWebRunner(meta.id, webProviderKey(meta.provider), webProfileDir(meta.provider));
     let ready: boolean;
     try {
       ready = await runner.isReady();
@@ -303,14 +308,15 @@ export function activate(context: vscode.ExtensionContext) {
    * profile can't be open headless and headed at once, so we tear down any
    * cached runner first and reopen it afterwards).
    */
-  async function startWebLogin(accountId: string, provider: string, label: string): Promise<void> {
-    const existing = webRunners.get(accountId);
+  async function startWebLogin(_accountId: string, provider: string, label: string): Promise<void> {
+    const dir = webProfileDir(provider);
+    const key = webProviderKey(provider);
+    // Free the chat runner so the headed login can own the (locked) profile.
+    const existing = webRunners.get(dir);
     if (existing) {
       existing.dispose();
-      webRunners.delete(accountId);
+      webRunners.delete(dir);
     }
-    const dir = webProfileDir(accountId);
-    const key = webProviderKey(provider);
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Abriendo navegador para iniciar sesión en "${label}"…`, cancellable: false },
       () =>
@@ -381,7 +387,7 @@ export function activate(context: vscode.ExtensionContext) {
         return {
           id: pinned.id,
           label: pinned.label,
-          web: { provider: webProviderKey(pinned.provider), profileDir: webProfileDir(pinned.id) },
+          web: { provider: webProviderKey(pinned.provider), profileDir: webProfileDir(pinned.provider) },
         };
       }
     }
