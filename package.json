@@ -52,6 +52,7 @@
         { "command": "keyRotator.moveAccountDown", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline@2" },
         { "command": "keyRotator.testAccount", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline@3" },
         { "command": "keyRotator.activateAccount", "when": "view == keyRotatorAccounts && viewItem == account", "group": "inline" },
+        { "command": "keyRotator.loginProfile", "when": "view == keyRotatorAccounts && viewItem == account && config.keyRotator.chatMode == profiles" },
         { "command": "keyRotator.editAccount", "when": "view == keyRotatorAccounts && viewItem == account" },
         { "command": "keyRotator.disableAccount", "when": "view == keyRotatorAccounts && viewItem == account" },
         { "command": "keyRotator.deleteAccount", "when": "view == keyRotatorAccounts && viewItem == account" }

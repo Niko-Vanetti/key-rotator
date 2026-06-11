@@ -571,16 +571,21 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`KeyRotator: el chat ahora usa "${acc?.label ?? id}".`);
     }),
 
-    vscode.commands.registerCommand('keyRotator.loginProfile', async () => {
+    vscode.commands.registerCommand('keyRotator.loginProfile', async (node?: { account?: AccountMeta }) => {
       const accounts = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
       if (accounts.length === 0) {
         vscode.window.showInformationMessage('KeyRotator: agrega primero una cuenta de Anthropic.');
         return;
       }
-      const picked = await vscode.window.showQuickPick(
-        accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
-        { placeHolder: 'Inicia sesión en el perfil de qué cuenta (modo chat "profiles")' }
-      );
+      let picked: { label: string; id: string } | undefined = node?.account
+        ? { label: node.account.label, id: node.account.id }
+        : undefined;
+      if (!picked) {
+        picked = await vscode.window.showQuickPick(
+          accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
+          { placeHolder: 'Inicia sesión en el perfil de qué cuenta (modo chat "profiles")' }
+        );
+      }
       if (!picked) return;
 
       // Open a terminal scoped to this account's CLAUDE_CONFIG_DIR and run the
