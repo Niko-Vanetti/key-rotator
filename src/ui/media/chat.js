@@ -262,12 +262,15 @@
     const selOpt = webModelSelect.options[webModelSelect.selectedIndex];
     if (selOpt) activeModelEl.textContent = selOpt.textContent;
     webToggles.innerHTML = '';
+    const onMap = msg.onToggles || {};
     (msg.toggles || []).forEach((t) => {
       const chip = document.createElement('button');
       chip.className = 'toggle-chip';
       chip.textContent = t.label;
       chip.dataset.id = t.id;
-      chip.dataset.on = '0';
+      const initOn = onMap[t.id] === true;
+      chip.dataset.on = initOn ? '1' : '0';
+      if (initOn) chip.classList.add('on');
       chip.addEventListener('click', () => {
         const on = chip.dataset.on === '1' ? false : true;
         chip.dataset.on = on ? '1' : '0';

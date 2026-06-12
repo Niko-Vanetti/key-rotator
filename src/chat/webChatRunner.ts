@@ -16,7 +16,8 @@ export interface WebTurnHandlers {
 /** In-chat model + feature toggles the web provider exposes (e.g. DeepSeek). */
 export interface WebCaps {
   models: { id: string; label: string }[];
-  toggles: { id: string; label: string }[];
+  /** `on` = the toggle's default state when a panel opens. */
+  toggles: { id: string; label: string; on?: boolean }[];
 }
 
 /** Per-turn selection of model + toggle states sent to the web chat. */
@@ -39,7 +40,8 @@ export const WEB_CAPS: Record<string, WebCaps> = {
     ],
     toggles: [
       { id: 'deepthink', label: 'Pensamiento Profundo' },
-      { id: 'search', label: 'Búsqueda inteligente' },
+      // On by default so DeepSeek can reach the web ("access everything").
+      { id: 'search', label: 'Búsqueda inteligente', on: true },
     ],
   },
 };

@@ -263,19 +263,31 @@ const chatReady = async (page) => !isAuth(page.url()) && (await hasComposer(page
 
 async function gotoChat(page) {
   await page.goto(CFG.url, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(1200);
+}
+
+// Poll for the chat to become ready (logged in + composer present). A single
+// fixed wait gave false "not logged in" when DeepSeek loaded slowly.
+async function waitChatReady(page, ms = 14000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (await chatReady(page)) return true;
+    await page.waitForTimeout(500);
+  }
+  return chatReady(page);
 }
 
 async function doStatus() {
   const { page } = await ensure(true);
   await gotoChat(page);
-  send({ type: 'status', ready: await chatReady(page), url: page.url() });
+  const ready = await waitChatReady(page);
+  send({ type: 'status', ready, url: page.url() });
 }
 
 async function doLogin() {
   const { page } = await ensure(false); // headed so the user can sign in
   await gotoChat(page);
-  if (await chatReady(page)) {
+  if (await waitChatReady(page, 6000)) {
     send({ type: 'login', ok: true });
     return;
   }
@@ -326,7 +338,7 @@ async function applyOpts(page, opts) {
 async function doSend(text, opts) {
   const { page } = await ensure(true);
   await gotoChat(page);
-  if (isAuth(page.url()) || !(await hasComposer(page))) {
+  if (!(await waitChatReady(page))) {
     send({ type: 'login_needed' });
     return;
   }

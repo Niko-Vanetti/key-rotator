@@ -116,13 +116,19 @@ export class ChatPanel {
     }
     const model = caps.models[0]?.id ?? null;
     this.session.setWebModel(model);
-    for (const t of caps.toggles) this.session.setWebToggle(t.id, false);
+    const onToggles: Record<string, boolean> = {};
+    for (const t of caps.toggles) {
+      const on = t.on === true;
+      onToggles[t.id] = on;
+      this.session.setWebToggle(t.id, on);
+    }
     this.post({
       type: 'webControls',
       web: true,
       models: caps.models,
       toggles: caps.toggles,
       selectedModel: model,
+      onToggles,
     });
   }
 
