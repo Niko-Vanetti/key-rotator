@@ -75,6 +75,8 @@ export interface ChatBackend {
   getWebRunner?(accountId: string, provider: string, profileDir: string): WebChatRunner;
   /** Static web caps (models+toggles) for an account, or null if not web. */
   getWebCapsFor?(accountId: string): WebCaps | null;
+  /** Display name for a web account's provider (e.g. 'DeepSeek'), or null. */
+  getWebProviderName?(accountId: string): string | null;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */
@@ -173,7 +175,7 @@ export class ChatSession {
     this.sessionCwd = cwd && cwd.length > 0 ? cwd : null;
   }
 
-  async sendMessage(text: string, handlers: TurnHandlers): Promise<void> {
+  async sendMessage(text: string, handlers: TurnHandlers, attachments?: string[]): Promise<void> {
     if (this.busy) {
       handlers.onError('Espera a que termine la respuesta anterior.');
       return;
@@ -189,7 +191,7 @@ export class ChatSession {
       // Web-chat accounts (DeepSeek, …) are served by the browser daemon, not
       // the claude CLI — handle them on a separate path (no failover/sessions).
       if (account.web) {
-        await this.runWebTurn(text, account, handlers);
+        await this.runWebTurn(text, account, handlers, attachments);
         return;
       }
 
@@ -254,7 +256,7 @@ export class ChatSession {
   }
 
   /** Serve a turn from a web-chat account via the browser daemon. */
-  private runWebTurn(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
+  private runWebTurn(text: string, account: ActiveAccount, handlers: TurnHandlers, attachments?: string[]): Promise<void> {
     return new Promise((resolve) => {
       const runner = this.backend.getWebRunner?.(account.id, account.web!.provider, account.web!.profileDir);
       if (!runner) {
@@ -282,7 +284,7 @@ export class ChatSession {
             resolve();
           },
         },
-        { model: this.webModel ?? undefined, toggles: this.webToggles }
+        { model: this.webModel ?? undefined, toggles: this.webToggles, files: attachments }
       );
     });
   }

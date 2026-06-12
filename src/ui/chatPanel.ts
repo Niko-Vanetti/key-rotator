@@ -22,6 +22,8 @@ export class ChatPanel {
   private session: ChatSession;
   /** Per-panel account override (null = global preferred account). */
   private accountId: string | null = null;
+  /** Files queued by the "+" menu to upload into the web chat on next send. */
+  private pendingWebFiles: string[] = [];
 
   private constructor(
     private extensionUri: vscode.Uri,
@@ -80,7 +82,7 @@ export class ChatPanel {
   /** Re-push account state to every open panel (e.g. after a global switch). */
   static refreshIfOpen(): void {
     for (const p of ChatPanel.panels) {
-      p.post({ type: 'meta', activeAccount: p.currentAccountLabel(), sessionId: p.session.currentSessionId });
+      p.post(p.metaMsg(p.session.currentSessionId));
       p.post({ type: 'accounts', accounts: p.accountsForMenu() });
     }
   }
@@ -95,6 +97,24 @@ export class ChatPanel {
       if (acc) return acc.label;
     }
     return this.activeAccountLabel();
+  }
+
+  /** Name to show on assistant bubbles: the web provider (DeepSeek/…) or Claude. */
+  private currentAssistantName(): string {
+    if (this.accountId) {
+      const name = this.backend.getWebProviderName?.(this.accountId);
+      if (name) return name;
+    }
+    return 'Claude';
+  }
+
+  private metaMsg(sessionId: string | null, activeAccount?: string): Record<string, unknown> {
+    return {
+      type: 'meta',
+      activeAccount: activeAccount ?? this.currentAccountLabel(),
+      assistantName: this.currentAssistantName(),
+      sessionId,
+    };
   }
 
   private accountsForMenu(): { id: string; label: string; active: boolean }[] {
@@ -157,7 +177,7 @@ export class ChatPanel {
     const loaded = await this.backend.loadHistory(id);
     this.session.setActiveSession(id, loaded?.cwd ?? null);
     this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: id });
-    this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: id });
+    this.post(this.metaMsg(id));
   }
 
   private startNewSession(): void {
@@ -166,7 +186,7 @@ export class ChatPanel {
     this.panel.title = 'Nuevo chat';
     this.post({ type: 'history', messages: [], activeId: null });
     this.post({ type: 'title', title: 'Nueva conversación' });
-    this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: null });
+    this.post(this.metaMsg(null));
   }
 
   private async handleMessage(msg: IncomingMessage): Promise<void> {
@@ -175,7 +195,7 @@ export class ChatPanel {
         const cfg = vscode.workspace.getConfiguration('keyRotator');
         const effort = cfg.get<string>('chatEffort', '').trim();
         this.session.setEffort(effort || null);
-        this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: this.session.currentSessionId });
+        this.post(this.metaMsg(this.session.currentSessionId));
         this.post({ type: 'config', effort });
         this.post({ type: 'accounts', accounts: this.accountsForMenu() });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
@@ -216,7 +236,7 @@ export class ChatPanel {
         if (msg.id) {
           this.accountId = msg.id;
           this.session.setAccount(msg.id);
-          this.post({ type: 'meta', activeAccount: this.currentAccountLabel(), sessionId: this.session.currentSessionId });
+          this.post(this.metaMsg(this.session.currentSessionId));
           this.post({ type: 'accounts', accounts: this.accountsForMenu() });
           this.postModels();
           this.postWebControls();
@@ -243,26 +263,46 @@ export class ChatPanel {
 
       // ----- attach a file (the "+" menu) -----
       case 'attachFile': {
-        const picked = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Adjuntar' });
-        if (picked && picked[0]) this.post({ type: 'insert', text: `@${picked[0].fsPath} ` });
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Adjuntar' });
+        if (!picked || picked.length === 0) break;
+        const isWeb = this.backend.getWebCapsFor?.(this.accountId ?? '') != null;
+        if (isWeb) {
+          // Web chat (DeepSeek, …): upload the file into the web chat on send.
+          for (const u of picked) {
+            this.pendingWebFiles.push(u.fsPath);
+            this.post({ type: 'webAttach', name: u.fsPath.split(/[\\/]/).pop(), path: u.fsPath });
+          }
+        } else {
+          // Claude (agent): reference the path with @ so the agent reads it.
+          this.post({ type: 'insert', text: picked.map((u) => `@${u.fsPath} `).join('') });
+        }
         break;
       }
+      case 'removeWebFile':
+        if (msg.value) this.pendingWebFiles = this.pendingWebFiles.filter((p) => p !== msg.value);
+        break;
 
       case 'send': {
         const text = (msg.text ?? '').trim();
         if (!text) return;
-        await this.session.sendMessage(text, {
-          onDelta: (t) => this.post({ type: 'delta', text: t }),
-          onAccountSwitch: (label, reason) => {
-            this.post({ type: 'switch', label, reason });
-            this.post({ type: 'meta', activeAccount: label, sessionId: this.session.currentSessionId });
+        const files = this.pendingWebFiles.slice();
+        this.pendingWebFiles = [];
+        await this.session.sendMessage(
+          text,
+          {
+            onDelta: (t) => this.post({ type: 'delta', text: t }),
+            onAccountSwitch: (label, reason) => {
+              this.post({ type: 'switch', label, reason });
+              this.post(this.metaMsg(this.session.currentSessionId, label));
+            },
+            onInfo: (t) => this.post({ type: 'info', text: t }),
+            onModel: (m) => this.post({ type: 'model', model: m }),
+            onUsage: (info) => this.post({ type: 'usage', info }),
+            onError: (t) => this.post({ type: 'turnError', text: t }),
+            onDone: (full) => this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId }),
           },
-          onInfo: (t) => this.post({ type: 'info', text: t }),
-          onModel: (m) => this.post({ type: 'model', model: m }),
-          onUsage: (info) => this.post({ type: 'usage', info }),
-          onError: (t) => this.post({ type: 'turnError', text: t }),
-          onDone: (full) => this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId }),
-        });
+          files
+        );
         break;
       }
     }

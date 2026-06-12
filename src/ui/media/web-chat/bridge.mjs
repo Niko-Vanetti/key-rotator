@@ -54,6 +54,8 @@ const PROVIDERS = {
       { id: 'search', label: 'Búsqueda inteligente' },
     ],
     toggleSel: '.ds-toggle-button',
+    // Hidden upload input (verified live: single input[type=file], multiple).
+    fileInput: 'input[type="file"]',
   },
 };
 const CFG = PROVIDERS[PROVIDER];
@@ -253,6 +255,14 @@ async function ensure(headless) {
     throw e;
   }
   const page = ctx.pages()[0] ?? (await ctx.newPage());
+  // Only in the visible (login) window: Opera GX opens promo/startup tabs
+  // (GX Corner, etc.) — close the extras so the user sees just our chat tab.
+  // Never touch the headless context (closing pages there can tear it down).
+  if (!headless) {
+    for (const p of ctx.pages()) {
+      if (p !== page) await p.close().catch(() => {});
+    }
+  }
   cur = { ctx, page, headless };
   return cur;
 }
@@ -335,6 +345,43 @@ async function applyOpts(page, opts) {
   }
 }
 
+// Upload local files into the chat's hidden file input (DeepSeek lets the model
+// read uploaded files). Waits until each file shows as attached (name appears).
+async function attachFiles(page, files) {
+  if (!Array.isArray(files) || files.length === 0 || !CFG.fileInput) return;
+  const input = page.locator(CFG.fileInput).first();
+  if (!(await input.count())) {
+    send({ type: 'info', text: 'Este chat no admite adjuntar archivos.' });
+    return;
+  }
+  await input.setInputFiles(files).catch((e) => send({ type: 'info', text: `No se pudo adjuntar: ${String(e?.message).slice(0, 80)}` }));
+  // Wait for the upload to register: the file name appears as an attachment.
+  for (const f of files) {
+    const base = f.split(/[\\/]/).pop();
+    if (base) await page.getByText(base, { exact: false }).first().waitFor({ timeout: 60000 }).catch(() => {});
+  }
+  await page.waitForTimeout(1200);
+}
+
+// Confirm-based login: open a clean headed window and KEEP it open; the user
+// signs in at their pace, then the extension calls `logincheck` to verify.
+async function doLoginOpen() {
+  const { page } = await ensure(false);
+  await gotoChat(page);
+  send({ type: 'loginopen', ready: await waitChatReady(page, 4000) });
+}
+
+async function doLoginCheck() {
+  if (!cur) {
+    send({ type: 'login', ok: false });
+    return;
+  }
+  const ready = await waitChatReady(cur.page, 8000);
+  send({ type: 'login', ok: ready });
+  await cur.ctx.close().catch(() => {});
+  cur = null;
+}
+
 async function doSend(text, opts) {
   const { page } = await ensure(true);
   await gotoChat(page);
@@ -343,6 +390,7 @@ async function doSend(text, opts) {
     return;
   }
   await applyOpts(page, opts);
+  await attachFiles(page, opts && opts.files);
   const composer = page.locator(CFG.composer).first();
   const replies = page.locator(CFG.reply);
   const before = await replies.count();
@@ -351,8 +399,10 @@ async function doSend(text, opts) {
   await composer.fill(text);
   await page.keyboard.press('Enter');
 
-  // Wait for the new reply bubble (≤30s).
-  const appear = Date.now() + 30000;
+  // Wait for the new reply bubble. Attachments + DeepThink make the first
+  // token take longer, so allow more time when files were uploaded.
+  const hasFiles = Array.isArray(opts && opts.files) && opts.files.length > 0;
+  const appear = Date.now() + (hasFiles ? 75000 : 45000);
   while ((await replies.count()) <= before && Date.now() < appear) {
     await page.waitForTimeout(400);
   }
@@ -408,6 +458,8 @@ rl.on('line', (line) => {
     .then(async () => {
       if (msg.cmd === 'status') return doStatus();
       if (msg.cmd === 'login') return doLogin();
+      if (msg.cmd === 'loginopen') return doLoginOpen();
+      if (msg.cmd === 'logincheck') return doLoginCheck();
       if (msg.cmd === 'send') return doSend(String(msg.text ?? ''), msg.opts);
     })
     .catch((e) => send({ type: 'error', message: String(e?.message || e) }));

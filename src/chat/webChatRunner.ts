@@ -24,6 +24,8 @@ export interface WebCaps {
 export interface WebOpts {
   model?: string;
   toggles?: Record<string, boolean>;
+  /** Absolute paths of files to upload into the chat before sending. */
+  files?: string[];
 }
 
 /**
@@ -31,6 +33,12 @@ export interface WebOpts {
  * (bridge.mjs). Used to build the chat UI without launching a browser. Keep in
  * sync with the daemon — both were verified live against chat.deepseek.com.
  */
+/** Display names per web provider key (for the chat's assistant label). */
+export const WEB_PROVIDER_NAMES: Record<string, string> = {
+  deepseek: 'DeepSeek',
+  qwen: 'Qwen',
+};
+
 export const WEB_CAPS: Record<string, WebCaps> = {
   deepseek: {
     models: [

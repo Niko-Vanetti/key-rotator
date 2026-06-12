@@ -16,7 +16,7 @@ import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
-import { WebChatRunner, WEB_CAPS } from './chat/webChatRunner.js';
+import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
@@ -319,53 +319,83 @@ export function activate(context: vscode.ExtensionContext) {
       existing.dispose();
       webRunners.delete(dir);
     }
-    await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Abriendo navegador para iniciar sesión en "${label}"…`, cancellable: false },
-      () =>
-        new Promise<void>((resolve) => {
-          const child = childProcess.spawn(process.execPath, [webDaemonPath, key, dir], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: {
-              ...process.env,
-              ELECTRON_RUN_AS_NODE: '1',
-              KR_WEB_BROWSER: getWebBrowserPref(),
-              KR_WEB_REAL_PROFILE: getWebRealProfile() ? '1' : '0',
-            },
-          });
-          const rl = readline.createInterface({ input: child.stdout });
-          let started = false;
-          rl.on('line', (line) => {
-            let o: { type?: string; ok?: boolean; message?: string };
-            try {
-              o = JSON.parse(line);
-            } catch {
-              return;
-            }
-            if (o.type === 'ready' && !started) {
-              started = true;
-              child.stdin.write(JSON.stringify({ cmd: 'login' }) + '\n');
-            } else if (o.type === 'login') {
-              vscode.window.showInformationMessage(
-                o.ok
-                  ? `"${label}": sesión iniciada. Ya puedes chatear con esta cuenta en KeyRotator.`
-                  : `"${label}": no se completó el inicio de sesión. Vuelve a intentarlo con "Iniciar sesión (cuenta web)".`
-              );
-              child.stdin.write(JSON.stringify({ cmd: 'quit' }) + '\n');
-              setTimeout(() => child.kill(), 1500);
-              resolve();
-            } else if (o.type === 'fatal' || o.type === 'error') {
-              vscode.window.showErrorMessage(`KeyRotator (web): ${o.message ?? 'error'}`);
-              child.kill();
-              resolve();
-            }
-          });
-          child.on('error', (e) => {
-            vscode.window.showErrorMessage(`KeyRotator (web): no se pudo abrir el navegador — ${e.message}`);
-            resolve();
-          });
-          child.on('exit', () => resolve());
-        })
-    );
+
+    const child = childProcess.spawn(process.execPath, [webDaemonPath, key, dir], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        KR_WEB_BROWSER: getWebBrowserPref(),
+        KR_WEB_REAL_PROFILE: getWebRealProfile() ? '1' : '0',
+      },
+    });
+    const writeCmd = (o: Record<string, unknown>) => {
+      try {
+        child.stdin.write(JSON.stringify(o) + '\n');
+      } catch {
+        /* child gone */
+      }
+    };
+    const quit = () => {
+      writeCmd({ cmd: 'quit' });
+      setTimeout(() => child.kill(), 1200);
+    };
+    const rl = readline.createInterface({ input: child.stdout });
+
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      rl.on('line', (line) => {
+        let o: { type?: string; ok?: boolean; message?: string };
+        try {
+          o = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (o.type === 'ready') {
+          // Open the clean login window and keep it open for the user.
+          writeCmd({ cmd: 'loginopen' });
+        } else if (o.type === 'loginopen') {
+          // Confirm-based: the user signs in at their pace, then presses Conectar.
+          void vscode.window
+            .showInformationMessage(
+              `Inicia sesión en "${label}" en la ventana del navegador que se abrió. Cuando ya estés dentro del chat, pulsa Conectar.`,
+              { modal: false },
+              'Conectar',
+              'Cancelar'
+            )
+            .then((choice) => {
+              if (choice === 'Conectar') {
+                writeCmd({ cmd: 'logincheck' });
+              } else {
+                quit();
+                finish();
+              }
+            });
+        } else if (o.type === 'login') {
+          vscode.window.showInformationMessage(
+            o.ok
+              ? `✅ "${label}": conectado. Ya puedes chatear con esta cuenta y cerrar el navegador.`
+              : `"${label}": no detecté la sesión. Asegúrate de haber entrado al chat y vuelve a intentarlo.`
+          );
+          quit();
+          finish();
+        } else if (o.type === 'fatal' || o.type === 'error') {
+          vscode.window.showErrorMessage(`KeyRotator (web): ${o.message ?? 'error'}`);
+          quit();
+          finish();
+        }
+      });
+      child.on('error', (e) => {
+        vscode.window.showErrorMessage(`KeyRotator (web): no se pudo abrir el navegador — ${e.message}`);
+        finish();
+      });
+      child.on('exit', () => finish());
+    });
   }
 
   const sortedActiveAnthropic = (): AccountMeta[] => {
@@ -606,6 +636,12 @@ export function activate(context: vscode.ExtensionContext) {
       const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
       if (!meta || !isWebProvider(meta.provider)) return null;
       return WEB_CAPS[webProviderKey(meta.provider)] ?? null;
+    },
+    getWebProviderName: (accountId: string) => {
+      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      if (!meta || !isWebProvider(meta.provider)) return null;
+      const key = webProviderKey(meta.provider);
+      return WEB_PROVIDER_NAMES[key] ?? key;
     },
   };
 

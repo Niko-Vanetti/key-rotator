@@ -53,11 +53,14 @@
   }
 
   // ---------- helpers ----------
+  // Name shown on assistant bubbles — updated from the active account (so a
+  // DeepSeek web account doesn't get labeled "Claude").
+  let assistantName = 'Claude';
   const clearWelcome = () => { const w = messagesEl.querySelector('.welcome'); if (w) w.remove(); };
   const scrollToBottom = () => { messagesEl.scrollTop = messagesEl.scrollHeight; };
   function buildMessageEl(role, text, asMarkdown) {
     const row = document.createElement('div'); row.className = 'msg ' + role;
-    const who = document.createElement('div'); who.className = 'who'; who.textContent = role === 'user' ? 'Tú' : 'Claude';
+    const who = document.createElement('div'); who.className = 'who'; who.textContent = role === 'user' ? 'Tú' : assistantName;
     const body = document.createElement('div'); body.className = 'body';
     if (asMarkdown) body.innerHTML = renderMarkdown(text || ''); else body.textContent = text || '';
     row.appendChild(who); row.appendChild(body);
@@ -212,13 +215,34 @@
     slashMenu.classList.add('hidden'); slashSel = -1; inputEl.focus(); autoGrow();
   }
 
+  // ---------- attachments (web chat file upload) ----------
+  const attachBar = $('attachBar');
+  function addAttachChip(name, path) {
+    attachBar.classList.remove('hidden');
+    const chip = document.createElement('span');
+    chip.className = 'attach-chip';
+    chip.dataset.path = path;
+    chip.innerHTML = '📎 <span></span> <button class="attach-x" title="Quitar">✕</button>';
+    chip.querySelector('span').textContent = name || path;
+    chip.querySelector('.attach-x').addEventListener('click', () => {
+      vscode.postMessage({ type: 'removeWebFile', value: path });
+      chip.remove();
+      if (!attachBar.children.length) attachBar.classList.add('hidden');
+    });
+    attachBar.appendChild(chip);
+  }
+  function clearAttachChips() { attachBar.innerHTML = ''; attachBar.classList.add('hidden'); }
+
   // ---------- chat ----------
   function send() {
     if (sending) return;
     const text = inputEl.value.trim();
     if (!text) return;
-    addMessage('user', text, false);
+    const atts = [...attachBar.querySelectorAll('.attach-chip span')].map((s) => s.textContent);
+    const label = atts.length ? text + '\n\n📎 ' + atts.join(', ') : text;
+    addMessage('user', label, false);
     inputEl.value = ''; autoGrow(); slashMenu.classList.add('hidden');
+    clearAttachChips();
     setSending(true); streamingRaw = '';
     streamingEl = addMessage('assistant', '', false);
     streamingEl.parentElement.classList.add('streaming');
@@ -299,6 +323,7 @@
         break;
       }
       case 'webControls': renderWebControls(msg); break;
+      case 'webAttach': addAttachChip(msg.name, msg.path); break;
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'slash': slashCommands = msg.commands || []; break;
       case 'loading':
@@ -310,6 +335,7 @@
         break;
       case 'meta':
         activeAccountEl.textContent = msg.activeAccount || '—';
+        if (msg.assistantName) assistantName = msg.assistantName;
         break;
       case 'title': chatTitleEl.textContent = msg.title || 'Nueva conversación'; break;
       case 'model': if (msg.model) activeModelEl.textContent = msg.model; break;

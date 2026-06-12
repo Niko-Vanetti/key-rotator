@@ -143,6 +143,15 @@ body {
   background: var(--vscode-button-background); color: var(--vscode-button-foreground);
   border-color: var(--vscode-button-background);
 }
+.attach-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 14px 0; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+  padding: 3px 6px 3px 9px; border-radius: 12px;
+  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+}
+.attach-chip span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-x { background: none; border: none; color: inherit; cursor: pointer; font-size: 11px; padding: 0 2px; opacity: 0.8; }
+.attach-x:hover { opacity: 1; }
 
 /* ---------- Slash autocomplete ---------- */
 .slash-menu {
