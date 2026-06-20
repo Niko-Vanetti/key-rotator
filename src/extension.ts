@@ -252,6 +252,67 @@ export function activate(context: vscode.ExtensionContext) {
     'web-chat',
     'bridge.mjs'
   ).fsPath;
+  // --- OpenAI-compatible API chat accounts (OpenRouter, …) ------------------
+  const OPENAI_ENDPOINTS: Record<string, string> = {
+    openrouter: 'https://openrouter.ai/api/v1',
+    openai: 'https://api.openai.com/v1',
+    groq: 'https://api.groq.com/openai/v1',
+    'together-ai': 'https://api.together.xyz/v1',
+  };
+  const isOpenAIProvider = (provider: string): boolean => provider in OPENAI_ENDPOINTS;
+  const openAIEndpoint = (meta: AccountMeta): string =>
+    (meta.endpoint && meta.endpoint.trim()) || OPENAI_ENDPOINTS[meta.provider] || OPENAI_ENDPOINTS.openrouter;
+  const DEFAULT_OPENROUTER_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+  const OAI_MODEL_KEY = 'keyRotator.openaiModelByAccount';
+  const getOaiModelMap = (): Record<string, string> =>
+    context.globalState.get<Record<string, string>>(OAI_MODEL_KEY, {});
+  const setOaiModel = (accountId: string, model: string) => {
+    const m = getOaiModelMap();
+    m[accountId] = model;
+    void context.globalState.update(OAI_MODEL_KEY, m);
+  };
+  const openAIModel = (meta: AccountMeta): string => {
+    // Per-account choice (set from the chat dropdown) wins, then the global
+    // setting, then a sensible default.
+    const perAccount = getOaiModelMap()[meta.id];
+    if (perAccount) return perAccount;
+    const cfg = vscode.workspace.getConfiguration('keyRotator').get<string>('openRouterModel', '').trim();
+    if (cfg) return cfg;
+    return meta.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : 'gpt-4o-mini';
+  };
+
+  // Cache of the OpenRouter model catalog (free + DeepSeek), for the chat picker.
+  let orModelsCache: { at: number; models: { id: string; label: string }[] } | null = null;
+  const ORFALLBACK_MODELS = [
+    { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash (barato)' },
+    { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+    { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra (free)' },
+    { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder (free)' },
+  ];
+  async function fetchOpenRouterModels(): Promise<{ id: string; label: string }[]> {
+    if (orModelsCache && Date.now() - orModelsCache.at < 30 * 60_000) return orModelsCache.models;
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(10000) });
+      const json = (await res.json()) as { data?: { id: string; pricing?: { prompt?: string; completion?: string } }[] };
+      const all = json.data ?? [];
+      const free = all.filter((m) => /:free$/.test(m.id));
+      const deepseek = all.filter((m) => /^deepseek\//.test(m.id) && !/:free$/.test(m.id));
+      const pick = [...deepseek, ...free];
+      const models = pick.map((m) => {
+        const isFree = /:free$/.test(m.id);
+        const out = (Number(m.pricing?.completion ?? 0) * 1e6).toFixed(2);
+        return { id: m.id, label: isFree ? `${m.id} (free)` : `${m.id} ($${out}/1M)` };
+      });
+      if (models.length > 0) {
+        orModelsCache = { at: Date.now(), models };
+        return models;
+      }
+    } catch {
+      // network error — use fallback
+    }
+    return ORFALLBACK_MODELS;
+  }
+
   const getWebBrowserPref = (): string =>
     vscode.workspace.getConfiguration('keyRotator').get<string>('webChatBrowser', 'auto') || 'auto';
   const getWebRealProfile = (): boolean =>
@@ -417,7 +478,8 @@ export function activate(context: vscode.ExtensionContext) {
     const mode = getChatMode();
 
     // A panel pinned to a web account (DeepSeek, …) always uses the browser
-    // daemon, independent of chatMode (which only governs the Claude paths).
+    // daemon; a pinned OpenAI-compatible account (OpenRouter, …) uses its API —
+    // both independent of chatMode (which only governs the Claude paths).
     if (preferredId) {
       const pinned = keyManager.getAllMeta().find((a) => a.id === preferredId);
       if (pinned && isWebProvider(pinned.provider)) {
@@ -425,6 +487,15 @@ export function activate(context: vscode.ExtensionContext) {
           id: pinned.id,
           label: pinned.label,
           web: { provider: webProviderKey(pinned.provider), profileDir: webProfileDir(pinned.provider) },
+        };
+      }
+      if (pinned && isOpenAIProvider(pinned.provider)) {
+        const key = await keyManager.getApiKey(pinned.id);
+        if (!key) return null;
+        return {
+          id: pinned.id,
+          label: pinned.label,
+          openai: { apiKey: key, endpoint: openAIEndpoint(pinned), model: openAIModel(pinned) },
         };
       }
     }
@@ -616,20 +687,21 @@ export function activate(context: vscode.ExtensionContext) {
       return prior && prior.length > 0 ? prior : FALLBACK_MODELS;
     },
     listChatAccounts: () => {
-      // Web accounts (DeepSeek, …) are always switchable regardless of chatMode.
-      const web = keyManager
+      // Web accounts (DeepSeek, …) and OpenAI-compatible API accounts
+      // (OpenRouter, …) are switchable regardless of chatMode.
+      const extra = keyManager
         .getAllMeta()
-        .filter((a) => isWebProvider(a.provider))
+        .filter((a) => isWebProvider(a.provider) || isOpenAIProvider(a.provider))
         .map((a) => ({ id: a.id, label: a.label, active: false }));
       // In 'full' mode the Claude side always uses the user's login, so only
-      // the web accounts are worth listing.
-      if (getChatMode() === 'full') return web;
+      // the web/API accounts are worth listing.
+      if (getChatMode() === 'full') return extra;
       const activeId = sortedActiveAnthropic()[0]?.id;
       const claude = keyManager
         .getAllMeta()
         .filter((a) => a.provider === CHAT_PROVIDER)
         .map((a) => ({ id: a.id, label: a.label, active: a.id === activeId }));
-      return [...claude, ...web];
+      return [...claude, ...extra];
     },
     getWebRunner,
     getWebCapsFor: (accountId: string) => {
@@ -639,9 +711,34 @@ export function activate(context: vscode.ExtensionContext) {
     },
     getWebProviderName: (accountId: string) => {
       const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
-      if (!meta || !isWebProvider(meta.provider)) return null;
-      const key = webProviderKey(meta.provider);
-      return WEB_PROVIDER_NAMES[key] ?? key;
+      if (!meta) return null;
+      if (isWebProvider(meta.provider)) {
+        const key = webProviderKey(meta.provider);
+        return WEB_PROVIDER_NAMES[key] ?? key;
+      }
+      // OpenAI-compatible API accounts: label the bubble with the provider.
+      if (isOpenAIProvider(meta.provider)) {
+        return meta.provider === 'openrouter' ? 'OpenRouter' : meta.provider;
+      }
+      return null;
+    },
+    getApiChatModel: (accountId: string) => {
+      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      if (!meta || !isOpenAIProvider(meta.provider)) return null;
+      return openAIModel(meta);
+    },
+    getApiChatModels: (accountId: string) => {
+      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      if (!meta || !isOpenAIProvider(meta.provider)) return null;
+      return orModelsCache?.models ?? ORFALLBACK_MODELS;
+    },
+    refreshApiChatModels: async (accountId: string) => {
+      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      if (!meta || !isOpenAIProvider(meta.provider)) return null;
+      return fetchOpenRouterModels();
+    },
+    setApiChatModel: (accountId: string, model: string) => {
+      if (model) setOaiModel(accountId, model);
     },
   };
 

@@ -275,6 +275,11 @@
           ],
           "description": "Qué navegador usa el chat web (DeepSeek, …). 'auto' respeta tu navegador por defecto. También acepta una ruta absoluta a un .exe de un navegador Chromium. Debe ser un navegador basado en Chromium (Firefox no es compatible con esta automatización)."
         },
+        "keyRotator.openRouterModel": {
+          "type": "string",
+          "default": "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "description": "Modelo a usar con cuentas OpenRouter (u otra API estilo OpenAI) en el chat. Formato 'proveedor/modelo' (los terminados en ':free' no cuestan). Ej: 'nvidia/nemotron-3-ultra-550b-a55b:free'."
+        },
         "keyRotator.webChatUseRealProfile": {
           "type": "boolean",
           "default": false,

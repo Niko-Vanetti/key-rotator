@@ -9,6 +9,7 @@ import {
 } from './streamParser.js';
 import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
 import type { WebChatRunner, WebCaps } from './webChatRunner.js';
+import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -32,6 +33,11 @@ export interface ActiveAccount {
    * web chat in a headless browser instead of the `claude` CLI. No API/key.
    */
   web?: { provider: string; profileDir: string };
+  /**
+   * OpenAI-compatible API account (OpenRouter, …): the turn is a streaming
+   * `/chat/completions` call instead of the `claude` CLI.
+   */
+  openai?: { apiKey: string; endpoint: string; model: string };
 }
 
 /**
@@ -77,6 +83,14 @@ export interface ChatBackend {
   getWebCapsFor?(accountId: string): WebCaps | null;
   /** Display name for a web account's provider (e.g. 'DeepSeek'), or null. */
   getWebProviderName?(accountId: string): string | null;
+  /** Current model string for an OpenAI-compatible (OpenRouter) account, or null. */
+  getApiChatModel?(accountId: string): string | null;
+  /** Cached model catalog (free + DeepSeek) for an OpenAI account, or null. */
+  getApiChatModels?(accountId: string): { id: string; label: string }[] | null;
+  /** Refresh that catalog from the provider (background), or null if N/A. */
+  refreshApiChatModels?(accountId: string): Promise<{ id: string; label: string }[] | null>;
+  /** Persist the chosen model for an OpenAI account (from the chat dropdown). */
+  setApiChatModel?(accountId: string, model: string): void;
 }
 
 /** UI-facing callbacks for a single in-flight turn. */
@@ -110,6 +124,8 @@ export class ChatSession {
   /** Web-chat selection (DeepSeek model + feature toggles), per panel. */
   private webModel: string | null = null;
   private webToggles: Record<string, boolean> = {};
+  /** In-memory history for OpenAI-compatible (OpenRouter) turns, per panel. */
+  private oaiMessages: OAIMessage[] = [];
 
   constructor(private backend: ChatBackend) {}
 
@@ -163,6 +179,7 @@ export class ChatSession {
   reset(): void {
     this.sessionId = null;
     this.sessionCwd = null;
+    this.oaiMessages = [];
   }
 
   /**
@@ -192,6 +209,12 @@ export class ChatSession {
       // the claude CLI — handle them on a separate path (no failover/sessions).
       if (account.web) {
         await this.runWebTurn(text, account, handlers, attachments);
+        return;
+      }
+
+      // OpenAI-compatible accounts (OpenRouter, …) → streaming /chat/completions.
+      if (account.openai) {
+        await this.runOpenAITurn(text, account, handlers);
         return;
       }
 
@@ -253,6 +276,28 @@ export class ChatSession {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Serve a turn from an OpenAI-compatible account (OpenRouter, …). */
+  private async runOpenAITurn(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
+    const oai = account.openai!;
+    handlers.onModel(oai.model);
+    this.oaiMessages.push({ role: 'user', content: text });
+    const res = await streamOpenAIChat({
+      endpoint: oai.endpoint,
+      apiKey: oai.apiKey,
+      model: oai.model,
+      messages: this.oaiMessages,
+      onDelta: (t) => handlers.onDelta(t),
+    });
+    if ('error' in res) {
+      // Keep the conversation consistent: drop the user turn we couldn't answer.
+      this.oaiMessages.pop();
+      handlers.onError(`Error de ${account.label}: ${res.error}`);
+      return;
+    }
+    this.oaiMessages.push({ role: 'assistant', content: res.text });
+    handlers.onDone(res.text);
   }
 
   /** Serve a turn from a web-chat account via the browser daemon. */

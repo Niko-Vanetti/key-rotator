@@ -154,6 +154,23 @@ export class ChatPanel {
 
   /** Push models: cached list instantly, then network-refreshed in background. */
   private postModels(): void {
+    // OpenAI-compatible (OpenRouter) accounts: list the free + DeepSeek catalog
+    // and let the user switch model from the chat dropdown.
+    const apiModel = this.backend.getApiChatModel?.(this.accountId ?? '');
+    if (apiModel) {
+      this.session.setModel(null);
+      const cached = this.backend.getApiChatModels?.(this.accountId ?? '') ?? [{ id: apiModel, label: apiModel }];
+      const ensure = cached.some((m) => m.id === apiModel) ? cached : [{ id: apiModel, label: apiModel }, ...cached];
+      this.post({ type: 'models', models: ensure, selected: apiModel });
+      this.post({ type: 'model', model: apiModel });
+      void this.backend.refreshApiChatModels?.(this.accountId ?? '').then((list) => {
+        if (!list) return;
+        const sel = this.backend.getApiChatModel?.(this.accountId ?? '') ?? apiModel;
+        const withSel = list.some((m) => m.id === sel) ? list : [{ id: sel, label: sel }, ...list];
+        this.post({ type: 'models', models: withSel, selected: sel });
+      });
+      return;
+    }
     const apply = async (models: { id: string; label: string }[]) => {
       const cfg = vscode.workspace.getConfiguration('keyRotator');
       let selected = cfg.get<string>('chatModel', '').trim();
@@ -211,6 +228,13 @@ export class ChatPanel {
 
       case 'setModel': {
         const v = (msg.value ?? '').trim();
+        // OpenAI-compatible (OpenRouter) accounts persist the model per account
+        // instead of the global Claude model setting.
+        if (this.backend.getApiChatModel?.(this.accountId ?? '') !== null && this.backend.setApiChatModel) {
+          this.backend.setApiChatModel(this.accountId ?? '', v);
+          this.post({ type: 'model', model: v });
+          break;
+        }
         this.session.setModel(v || null);
         await vscode.workspace.getConfiguration('keyRotator').update('chatModel', v, vscode.ConfigurationTarget.Global);
         break;
