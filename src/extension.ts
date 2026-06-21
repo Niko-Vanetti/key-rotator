@@ -17,7 +17,7 @@ import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js'
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
 import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
-import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache } from './chat/sessionStore.js';
+import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -56,6 +56,23 @@ export function activate(context: vscode.ExtensionContext) {
     clearTimeout(persistTimer);
     persistTimer = setTimeout(() => void context.globalState.update('keyRotator.scanCache', exportScanCache()), 2000);
   };
+
+  // Auto-sync the Chats list with the shared Claude store: watch
+  // ~/.claude/projects and refresh when sessions are created/renamed/updated
+  // (e.g. you start or title a chat in native Claude Code). Debounced.
+  try {
+    let watchTimer: NodeJS.Timeout | undefined;
+    const watcher = fs.watch(defaultProjectsRoot(), { recursive: true }, () => {
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => {
+        sessionsProvider.refresh();
+        persistScanCache();
+      }, 700);
+    });
+    context.subscriptions.push(new vscode.Disposable(() => watcher.close()));
+  } catch {
+    // store not present yet / watch unsupported — non-fatal
+  }
 
   const refreshUI = () => {
     statusBar.update(keyManager.getAllMeta());
@@ -226,6 +243,12 @@ export function activate(context: vscode.ExtensionContext) {
   const PREFERRED_KEY = 'keyRotator.preferredChatAccount';
   const getPreferredId = (): string | undefined => context.globalState.get<string>(PREFERRED_KEY);
   const setPreferredId = (id: string | undefined) => context.globalState.update(PREFERRED_KEY, id);
+  // The account a chat panel is effectively using: its per-panel pin, or the
+  // globally-selected account (tree click) when the panel isn't pinned.
+  const resolveMeta = (accountId?: string | null): AccountMeta | undefined => {
+    const id = accountId || getPreferredId();
+    return id ? keyManager.getAllMeta().find((a) => a.id === id) : undefined;
+  };
 
   // --- web-chat accounts (DeepSeek, … driven via a headless browser) --------
   // Provider id is `<key>-web` (e.g. 'deepseek-web'); the daemon's provider key
@@ -480,8 +503,11 @@ export function activate(context: vscode.ExtensionContext) {
     // A panel pinned to a web account (DeepSeek, …) always uses the browser
     // daemon; a pinned OpenAI-compatible account (OpenRouter, …) uses its API —
     // both independent of chatMode (which only governs the Claude paths).
-    if (preferredId) {
-      const pinned = keyManager.getAllMeta().find((a) => a.id === preferredId);
+    // Fall back to the globally-selected account (tree click) when the panel
+    // has no explicit pin, so picking OpenRouter/DeepSeek anywhere just works.
+    const pref = preferredId ?? getPreferredId();
+    if (pref) {
+      const pinned = keyManager.getAllMeta().find((a) => a.id === pref);
       if (pinned && isWebProvider(pinned.provider)) {
         return {
           id: pinned.id,
@@ -705,12 +731,12 @@ export function activate(context: vscode.ExtensionContext) {
     },
     getWebRunner,
     getWebCapsFor: (accountId: string) => {
-      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      const meta = resolveMeta(accountId);
       if (!meta || !isWebProvider(meta.provider)) return null;
       return WEB_CAPS[webProviderKey(meta.provider)] ?? null;
     },
     getWebProviderName: (accountId: string) => {
-      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      const meta = resolveMeta(accountId);
       if (!meta) return null;
       if (isWebProvider(meta.provider)) {
         const key = webProviderKey(meta.provider);
@@ -723,22 +749,23 @@ export function activate(context: vscode.ExtensionContext) {
       return null;
     },
     getApiChatModel: (accountId: string) => {
-      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
       return openAIModel(meta);
     },
     getApiChatModels: (accountId: string) => {
-      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
       return orModelsCache?.models ?? ORFALLBACK_MODELS;
     },
     refreshApiChatModels: async (accountId: string) => {
-      const meta = keyManager.getAllMeta().find((a) => a.id === accountId);
+      const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
       return fetchOpenRouterModels();
     },
     setApiChatModel: (accountId: string, model: string) => {
-      if (model) setOaiModel(accountId, model);
+      const meta = resolveMeta(accountId);
+      if (meta && model) setOaiModel(meta.id, model);
     },
   };
 
