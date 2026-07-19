@@ -24,6 +24,8 @@ export interface OAIStreamOptions {
    */
   maxPerMinute?: number;
   throttleKey?: string;
+  /** Extra request params from the pasted sample (temperature, top_p, …). */
+  params?: Record<string, number>;
 }
 
 /** rateLimited: true means the caller should try the next account. */
@@ -46,7 +48,7 @@ export async function streamOpenAIChat(opts: OAIStreamOptions): Promise<OAIStrea
         'HTTP-Referer': 'https://github.com/Nikorasu-Vanetti/key-rotator',
         'X-Title': 'KeyRotator',
       },
-      body: JSON.stringify({ model: opts.model, messages: opts.messages, stream: true }),
+      body: JSON.stringify({ model: opts.model, messages: opts.messages, stream: true, ...(opts.params ?? {}) }),
       signal: opts.signal,
     });
   } catch (e) {

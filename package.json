@@ -87,6 +87,16 @@
         "icon": "$(add)"
       },
       {
+        "command": "keyRotator.deleteChat",
+        "title": "KeyRotator: Borrar chat",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "keyRotator.pasteSnippet",
+        "title": "KeyRotator: Pegar código (NVIDIA Build / OpenRouter)",
+        "icon": "$(clippy)"
+      },
+      {
         "command": "keyRotator.loginProfile",
         "title": "KeyRotator: Log in Account (Chat)",
         "icon": "$(sign-in)"
@@ -137,6 +147,16 @@
           "group": "navigation@1"
         },
         {
+          "command": "keyRotator.pasteSnippet",
+          "when": "view == keyRotatorChats",
+          "group": "navigation@2"
+        },
+        {
+          "command": "keyRotator.pasteSnippet",
+          "when": "view == keyRotatorAccounts",
+          "group": "navigation@0"
+        },
+        {
           "command": "keyRotator.addAccount",
           "when": "view == keyRotatorAccounts",
           "group": "navigation@1"
@@ -153,6 +173,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "keyRotator.deleteChat",
+          "when": "view == keyRotatorChats && viewItem == chatSession",
+          "group": "inline@1"
+        },
         {
           "command": "keyRotator.moveAccountUp",
           "when": "view == keyRotatorAccounts && viewItem == account",
@@ -292,7 +317,7 @@
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts"
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts test/snippetParser.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

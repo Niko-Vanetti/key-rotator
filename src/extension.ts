@@ -21,6 +21,7 @@ import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
 import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
 import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
+import { parseSnippet, snippetHasData } from './core/snippetParser.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -320,6 +321,16 @@ export function activate(context: vscode.ExtensionContext) {
   const openAIEndpoint = (meta: AccountMeta): string =>
     (meta.endpoint && meta.endpoint.trim()) || OPENAI_ENDPOINTS[meta.provider] || OPENAI_ENDPOINTS.openrouter;
   const OAI_MODEL_KEY = 'keyRotator.openaiModelByAccount';
+  // Request params (temperature, top_p, max_tokens, seed) captured from the
+  // pasted sample code, applied to every request of that account.
+  const OAI_PARAMS_KEY = 'keyRotator.openaiParamsByAccount';
+  const getOaiParams = (accountId: string): Record<string, number> | undefined =>
+    context.globalState.get<Record<string, Record<string, number>>>(OAI_PARAMS_KEY, {})[accountId];
+  const setOaiParams = (accountId: string, params: Record<string, number>) => {
+    const m = context.globalState.get<Record<string, Record<string, number>>>(OAI_PARAMS_KEY, {});
+    m[accountId] = params;
+    void context.globalState.update(OAI_PARAMS_KEY, m);
+  };
   const getOaiModelMap = (): Record<string, string> =>
     context.globalState.get<Record<string, string>>(OAI_MODEL_KEY, {});
   const setOaiModel = (accountId: string, model: string) => {
@@ -577,7 +588,13 @@ export function activate(context: vscode.ExtensionContext) {
         return {
           id: pinned.id,
           label: pinned.label,
-          openai: { apiKey: key, endpoint: openAIEndpoint(pinned), model: openAIModel(pinned), provider: pinned.provider },
+          openai: {
+            apiKey: key,
+            endpoint: openAIEndpoint(pinned),
+            model: openAIModel(pinned),
+            provider: pinned.provider,
+            params: getOaiParams(pinned.id),
+          },
         };
       }
     }
@@ -624,7 +641,13 @@ export function activate(context: vscode.ExtensionContext) {
       return {
         id: next.id,
         label: next.label,
-        openai: { apiKey: key, endpoint: openAIEndpoint(next), model: openAIModel(next), provider: next.provider },
+        openai: {
+          apiKey: key,
+          endpoint: openAIEndpoint(next),
+          model: openAIModel(next),
+          provider: next.provider,
+          params: getOaiParams(next.id),
+        },
       };
     }
 
@@ -946,6 +969,101 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('keyRotator.newChatSession', () => {
       ChatPanel.openSession(context.extensionUri, chatBackend, activeChatAccountLabel, null);
+    }),
+
+    // 🗑 en cada chat del árbol: borra sesiones del agente (almacén propio) o
+    // de Claude (almacén compartido — desaparece también en Claude Code).
+    vscode.commands.registerCommand(
+      'keyRotator.deleteChat',
+      async (node?: { session?: { id: string; name: string; filePath: string } }) => {
+        const s = node?.session;
+        if (!s) return;
+        const esAgente = isAgentSessionId(s.id);
+        const pick = await vscode.window.showWarningMessage(
+          esAgente
+            ? `¿Borrar el chat del agente "${s.name}"?`
+            : `¿Borrar el chat "${s.name}"?\n\nEs el almacén compartido: también desaparecerá de Claude Code.`,
+          { modal: true },
+          'Borrar'
+        );
+        if (pick !== 'Borrar') return;
+        if (esAgente) {
+          agentStore.delete(s.id);
+        } else if (s.filePath) {
+          try {
+            fs.rmSync(s.filePath);
+          } catch (e) {
+            void vscode.window.showErrorMessage(`KeyRotator: no se pudo borrar — ${(e as Error).message}`);
+            return;
+          }
+        }
+        sessionsProvider.refresh();
+      }
+    ),
+
+    // Configuración en UN pegado: lee el código de ejemplo de build.nvidia.com
+    // (o OpenRouter) del portapapeles y saca endpoint + key + modelo + params.
+    vscode.commands.registerCommand('keyRotator.pasteSnippet', async () => {
+      let parsed = parseSnippet((await vscode.env.clipboard.readText()).trim());
+      if (!snippetHasData(parsed)) {
+        const typed = await vscode.window.showInputBox({
+          title: 'Pegar código (NVIDIA Build / OpenRouter)',
+          prompt: 'Pega el código de ejemplo (Python/JS) tal cual, o solo tu API key',
+          placeHolder: 'from openai import OpenAI … base_url="https://integrate.api.nvidia.com/v1" …',
+          ignoreFocusOut: true,
+        });
+        if (!typed) return;
+        parsed = parseSnippet(typed);
+        if (!snippetHasData(parsed)) {
+          void vscode.window.showErrorMessage(
+            'KeyRotator: no encontré endpoint, modelo ni API key en lo pegado. Copia el bloque de código completo de build.nvidia.com.'
+          );
+          return;
+        }
+      }
+      const provider = parsed.provider ?? 'nvidia';
+      let apiKey = parsed.apiKey;
+      if (!apiKey) {
+        apiKey =
+          (
+            await vscode.window.showInputBox({
+              title: 'Tu API key',
+              prompt: `El código trae un placeholder — pega tu key real de ${provider === 'nvidia' ? 'NVIDIA Build (nvapi-…)' : 'OpenRouter (sk-or-…)'}`,
+              password: true,
+              ignoreFocusOut: true,
+            })
+          )?.trim() || null;
+        if (!apiKey) return;
+      }
+      const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === provider);
+      const id = randomUUID();
+      const baseLabel = provider === 'nvidia' ? 'NVIDIA Build' : 'OpenRouter';
+      const label = sameProvider.length ? `${baseLabel} ${sameProvider.length + 1}` : baseLabel;
+      await keyManager.addAccount({
+        id,
+        provider,
+        label,
+        apiKey,
+        envVar: provider === 'nvidia' ? 'NVIDIA_API_KEY' : 'OPENROUTER_API_KEY',
+        endpoint: parsed.baseUrl ?? undefined,
+        priority: sameProvider.length + 1,
+        switchMode: 'auto',
+        status: 'active',
+      });
+      if (parsed.model) setOaiModel(id, parsed.model);
+      if (Object.keys(parsed.params).length) setOaiParams(id, parsed.params);
+      await context.globalState.update('keyRotator.preferredChatAccount', id);
+      refreshUI();
+      ChatPanel.refreshIfOpen();
+      const resumen = [
+        `cuenta "${label}"`,
+        parsed.model ? `modelo ${parsed.model}` : 'modelo: elígelo en el chat',
+        Object.keys(parsed.params).length ? `params ${JSON.stringify(parsed.params)}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      void vscode.window.showInformationMessage(`KeyRotator: listo — ${resumen}. Abriendo el chat…`);
+      await vscode.commands.executeCommand('keyRotator.openChat');
     }),
 
     vscode.commands.registerCommand('keyRotator.moveAccountUp', async (node?: { account?: AccountMeta }) => {

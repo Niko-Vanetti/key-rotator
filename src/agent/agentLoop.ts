@@ -94,6 +94,8 @@ export interface AgentTurnOpts {
   throttleKey?: string;
   maxSteps?: number;
   signal?: AbortSignal;
+  /** Extra request params from the pasted sample (temperature, top_p, …). */
+  params?: Record<string, number>;
 }
 
 export type AgentTurnResult = { text: string } | { error: string; rateLimited?: boolean };
@@ -153,6 +155,7 @@ async function streamCall(
         messages: opts.messages,
         tools: AGENT_TOOLS,
         stream: true,
+        ...(opts.params ?? {}),
       }),
       signal: opts.signal,
     });

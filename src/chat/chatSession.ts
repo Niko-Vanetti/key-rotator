@@ -41,7 +41,7 @@ export interface ActiveAccount {
    * OpenAI-compatible API account (OpenRouter, …): the turn is a streaming
    * `/chat/completions` call instead of the `claude` CLI.
    */
-  openai?: { apiKey: string; endpoint: string; model: string; provider: string };
+  openai?: { apiKey: string; endpoint: string; model: string; provider: string; params?: Record<string, number> };
 }
 
 /**
@@ -367,6 +367,7 @@ export class ChatSession {
       onToolStart: (name, args) => handlers.onInfo(`🔧 ${name} ${args.slice(0, 140)}`),
       maxPerMinute: cap,
       throttleKey: cap ? `${oai.provider}:${account.id}` : undefined,
+      params: oai.params,
     });
 
     // Persist whatever really happened (tools already ran even on error).
@@ -402,6 +403,7 @@ export class ChatSession {
         onDelta: (t) => handlers.onDelta(t),
         maxPerMinute: cap,
         throttleKey: cap ? `${oai.provider}:${current.id}` : undefined,
+        params: oai.params,
       });
       if ('error' in res) {
         if (res.rateLimited) {
