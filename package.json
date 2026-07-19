@@ -277,8 +277,8 @@
         },
         "keyRotator.openRouterModel": {
           "type": "string",
-          "default": "nvidia/nemotron-3-ultra-550b-a55b:free",
-          "description": "Modelo a usar con cuentas OpenRouter en el chat (no aplica a cuentas NVIDIA Build, que usan 'z-ai/glm-5.2' por defecto — cambia el modelo de cualquiera desde el selector del chat). Formato 'proveedor/modelo' (los terminados en ':free' no cuestan). Ej: 'nvidia/nemotron-3-ultra-550b-a55b:free'."
+          "default": "",
+          "description": "Opcional: modelo fijo para cuentas OpenRouter en el chat/agente (formato 'proveedor/modelo'; los ':free' no cuestan). Vacío = sin default; eliges desde el selector del chat, que carga la lista real desde la API de tu cuenta."
         },
         "keyRotator.webChatUseRealProfile": {
           "type": "boolean",
@@ -292,7 +292,7 @@
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts"
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

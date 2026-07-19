@@ -10,6 +10,10 @@ import {
 import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
 import type { WebChatRunner, WebCaps } from './webChatRunner.js';
 import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
+import { runAgentTurn } from '../agent/agentLoop.js';
+import { executeTool, agentSystemPrompt } from '../agent/tools.js';
+import { PermissionGate, type PermAnswer, type PermCategory } from '../agent/permissions.js';
+import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore } from '../agent/agentStore.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -91,7 +95,22 @@ export interface ChatBackend {
   refreshApiChatModels?(accountId: string): Promise<{ id: string; label: string }[] | null>;
   /** Persist the chosen model for an OpenAI account (from the chat dropdown). */
   setApiChatModel?(accountId: string, model: string): void;
+  /** Agent support (NVIDIA Build / OpenRouter): permissions UI + own store. */
+  getAgentContext?(): AgentBackendContext;
 }
+
+/** What the agent path needs from the extension host. */
+export interface AgentBackendContext {
+  /** Default working folder (Documents\KeyRotator Agent). */
+  defaultCwd(): string;
+  /** Modal permission prompt → allow / allowAll / deny (undefined = deny). */
+  promptPermission(message: string, category: PermCategory): Promise<PermAnswer | undefined>;
+  /** The agent's own session store (separate from the Claude store). */
+  store: AgentStore;
+}
+
+/** Providers served by the AGENT loop (tools) instead of the plain chat. */
+const AGENT_PROVIDERS = new Set(['nvidia', 'openrouter']);
 
 /** UI-facing callbacks for a single in-flight turn. */
 export interface TurnHandlers {
@@ -126,6 +145,10 @@ export class ChatSession {
   private webToggles: Record<string, boolean> = {};
   /** In-memory history for OpenAI-compatible (OpenRouter) turns, per panel. */
   private oaiMessages: OAIMessage[] = [];
+  /** Agent conversation (NVIDIA/OpenRouter with tools), per panel. */
+  private agentSession: AgentSession | null = null;
+  /** Permission grants ("allow all") live per conversation. */
+  private agentGate: PermissionGate | null = null;
 
   constructor(private backend: ChatBackend) {}
 
@@ -168,7 +191,7 @@ export class ChatSession {
   }
 
   get currentSessionId(): string | null {
-    return this.sessionId;
+    return this.agentSession?.id ?? this.sessionId;
   }
 
   isBusy(): boolean {
@@ -180,14 +203,26 @@ export class ChatSession {
     this.sessionId = null;
     this.sessionCwd = null;
     this.oaiMessages = [];
+    this.agentSession = null;
+    this.agentGate = null;
   }
 
   /**
    * Point the chat at an existing Claude session (from the shared store) so the
    * next message continues it via `--resume`, running in its original cwd so
    * the transcript stays in the same project file the native app reads.
+   * Agent sessions (`agent-*`) load from the agent's own store instead.
    */
   setActiveSession(id: string | null, cwd?: string | null): void {
+    if (id && isAgentSessionId(id)) {
+      this.agentSession = this.backend.getAgentContext?.().store.load(id) ?? null;
+      this.agentGate = null; // resumed conversation asks permissions afresh
+      this.sessionId = null;
+      this.sessionCwd = null;
+      return;
+    }
+    this.agentSession = null;
+    this.agentGate = null;
     this.sessionId = id;
     this.sessionCwd = cwd && cwd.length > 0 ? cwd : null;
   }
@@ -212,7 +247,13 @@ export class ChatSession {
         return;
       }
 
-      // OpenAI-compatible accounts (OpenRouter, …) → streaming /chat/completions.
+      // NVIDIA Build / OpenRouter → the file/command AGENT loop (tools).
+      if (account.openai && AGENT_PROVIDERS.has(account.openai.provider)) {
+        await this.runAgentTurnFor(text, account, handlers);
+        return;
+      }
+
+      // Other OpenAI-compatible accounts → plain streaming /chat/completions.
       if (account.openai) {
         await this.runOpenAITurn(text, account, handlers);
         return;
@@ -285,8 +326,68 @@ export class ChatSession {
    */
   private static readonly RPM_CAPS: Record<string, number> = { nvidia: 35 };
 
+  /** Serve a turn of the file/command agent (NVIDIA Build / OpenRouter). */
+  private async runAgentTurnFor(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
+    const ctx = this.backend.getAgentContext?.();
+    if (!ctx) {
+      handlers.onError('El agente no está disponible en este entorno.');
+      return;
+    }
+    const oai = account.openai!;
+    if (!oai.model) {
+      handlers.onError(
+        'Elige primero un modelo en el selector de abajo (la lista se carga desde la API de tu cuenta). Sin modelo elegido, el agente no envía nada.'
+      );
+      return;
+    }
+    if (!this.agentSession) {
+      this.agentSession = newAgentSession(account.id, oai.provider, oai.model, ctx.defaultCwd());
+    }
+    if (!this.agentGate) {
+      this.agentGate = new PermissionGate((msg, cat) => ctx.promptPermission(msg, cat));
+    }
+    const s = this.agentSession;
+    const gate = this.agentGate;
+    s.model = oai.model;
+    if (s.messages.length === 0) {
+      s.messages.push({ role: 'system', content: agentSystemPrompt(s.cwd) });
+    }
+    s.messages.push({ role: 'user', content: text });
+    handlers.onModel(oai.model);
+
+    const cap = ChatSession.RPM_CAPS[oai.provider];
+    const res = await runAgentTurn({
+      endpoint: oai.endpoint,
+      apiKey: oai.apiKey,
+      model: oai.model,
+      messages: s.messages,
+      execute: (name, args) =>
+        executeTool(name, args, { getCwd: () => s.cwd, setCwd: (d) => (s.cwd = d), gate }),
+      onDelta: (t) => handlers.onDelta(t),
+      onToolStart: (name, args) => handlers.onInfo(`🔧 ${name} ${args.slice(0, 140)}`),
+      maxPerMinute: cap,
+      throttleKey: cap ? `${oai.provider}:${account.id}` : undefined,
+    });
+
+    // Persist whatever really happened (tools already ran even on error).
+    try {
+      ctx.store.save(s);
+    } catch {
+      // best-effort: a failed save must not eat the reply
+    }
+    if ('error' in res) {
+      handlers.onError(`Error de ${account.label}: ${res.error}`);
+      return;
+    }
+    handlers.onDone(res.text);
+  }
+
   /** Serve a turn from an OpenAI-compatible account (OpenRouter, NVIDIA Build, …). */
   private async runOpenAITurn(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
+    if (!account.openai!.model) {
+      handlers.onError('Elige primero un modelo en el selector de abajo (la lista se carga desde la API de tu cuenta).');
+      return;
+    }
     this.oaiMessages.push({ role: 'user', content: text });
     let current = account;
     for (let attempt = 0; attempt <= MAX_FAILOVERS; attempt++) {

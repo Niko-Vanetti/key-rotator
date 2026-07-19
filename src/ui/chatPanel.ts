@@ -156,18 +156,23 @@ export class ChatPanel {
   private postModels(): void {
     // OpenAI-compatible (OpenRouter) accounts: list the free + DeepSeek catalog
     // and let the user switch model from the chat dropdown.
+    // '' = API account with NO model chosen yet (sin defaults): show the
+    // placeholder option until the live catalog loads and the user picks one.
     const apiModel = this.backend.getApiChatModel?.(this.accountId ?? '');
-    if (apiModel) {
+    if (apiModel !== null && apiModel !== undefined) {
       this.session.setModel(null);
-      const cached = this.backend.getApiChatModels?.(this.accountId ?? '') ?? [{ id: apiModel, label: apiModel }];
-      const ensure = cached.some((m) => m.id === apiModel) ? cached : [{ id: apiModel, label: apiModel }, ...cached];
-      this.post({ type: 'models', models: ensure, selected: apiModel });
-      this.post({ type: 'model', model: apiModel });
+      const placeholder = { id: '', label: '— elige un modelo —' };
+      const withSelection = (list: { id: string; label: string }[], sel: string) => {
+        if (!sel) return [placeholder, ...list];
+        return list.some((m) => m.id === sel) ? list : [{ id: sel, label: sel }, ...list];
+      };
+      const cached = this.backend.getApiChatModels?.(this.accountId ?? '') ?? [];
+      this.post({ type: 'models', models: withSelection(cached, apiModel), selected: apiModel });
+      this.post({ type: 'model', model: apiModel || 'elige un modelo' });
       void this.backend.refreshApiChatModels?.(this.accountId ?? '').then((list) => {
         if (!list) return;
-        const sel = this.backend.getApiChatModel?.(this.accountId ?? '') ?? apiModel;
-        const withSel = list.some((m) => m.id === sel) ? list : [{ id: sel, label: sel }, ...list];
-        this.post({ type: 'models', models: withSel, selected: sel });
+        const sel = this.backend.getApiChatModel?.(this.accountId ?? '') || '';
+        this.post({ type: 'models', models: withSelection(list, sel), selected: sel });
       });
       return;
     }

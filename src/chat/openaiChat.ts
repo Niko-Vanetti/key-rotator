@@ -103,7 +103,7 @@ export async function streamOpenAIChat(opts: OAIStreamOptions): Promise<OAIStrea
 const requestLog = new Map<string, number[]>();
 
 /** Waits until firing a request keeps `key` under `maxPerMinute` for the last 60s. */
-async function waitForSlot(key: string, maxPerMinute: number): Promise<void> {
+export async function waitForSlot(key: string, maxPerMinute: number): Promise<void> {
   for (;;) {
     const now = Date.now();
     const log = (requestLog.get(key) ?? []).filter((t) => now - t < 60_000);

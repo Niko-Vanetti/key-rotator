@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import * as childProcess from 'node:child_process';
 import * as readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +20,7 @@ import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
 import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
+import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -45,7 +48,17 @@ export function activate(context: vscode.ExtensionContext) {
   // panel open instantly even on a cold start (no re-reading MB of jsonl).
   seedScanCache(context.globalState.get('keyRotator.scanCache', {}));
 
-  const sessionsProvider = new SessionsTreeProvider(() => listNamedSessions());
+  // --- agent (NVIDIA Build / OpenRouter con herramientas) -------------------
+  const agentStore = new AgentStore(vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath);
+  const agentDefaultCwd = () => path.join(os.homedir(), 'Documents', 'KeyRotator Agent');
+  // Agent sessions appear in the Chats tree alongside Claude's (⚡ prefix).
+  const allSessions = () =>
+    [
+      ...listNamedSessions(),
+      ...agentStore.list().map((s) => ({ id: s.id, name: `⚡ ${s.title}`, cwd: '', mtime: s.updatedAt, filePath: '' })),
+    ].sort((a, b) => b.mtime - a.mtime);
+
+  const sessionsProvider = new SessionsTreeProvider(() => allSessions());
 
   vscode.window.registerTreeDataProvider('keyRotatorAccounts', treeProvider);
   vscode.window.registerTreeDataProvider('keyRotatorChats', sessionsProvider);
@@ -72,6 +85,22 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(new vscode.Disposable(() => watcher.close()));
   } catch {
     // store not present yet / watch unsupported — non-fatal
+  }
+
+  // Same auto-refresh for the agent's own session store.
+  try {
+    fs.mkdirSync(vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath, { recursive: true });
+    let agentWatchTimer: NodeJS.Timeout | undefined;
+    const agentWatcher = fs.watch(
+      vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath,
+      () => {
+        clearTimeout(agentWatchTimer);
+        agentWatchTimer = setTimeout(() => sessionsProvider.refresh(), 700);
+      }
+    );
+    context.subscriptions.push(new vscode.Disposable(() => agentWatcher.close()));
+  } catch {
+    // watch unsupported — non-fatal
   }
 
   const refreshUI = () => {
@@ -290,8 +319,6 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const openAIEndpoint = (meta: AccountMeta): string =>
     (meta.endpoint && meta.endpoint.trim()) || OPENAI_ENDPOINTS[meta.provider] || OPENAI_ENDPOINTS.openrouter;
-  const DEFAULT_OPENROUTER_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-  const DEFAULT_NVIDIA_MODEL = 'z-ai/glm-5.2';
   const OAI_MODEL_KEY = 'keyRotator.openaiModelByAccount';
   const getOaiModelMap = (): Record<string, string> =>
     context.globalState.get<Record<string, string>>(OAI_MODEL_KEY, {});
@@ -301,24 +328,21 @@ export function activate(context: vscode.ExtensionContext) {
     void context.globalState.update(OAI_MODEL_KEY, m);
   };
   const openAIModel = (meta: AccountMeta): string => {
-    // Per-account choice (set from the chat dropdown) wins, then a
-    // provider-specific default, then the global (OpenRouter-oriented) setting.
+    // Per-account choice (set from the chat dropdown) wins, then the explicit
+    // OpenRouter setting. NO hardcoded default: '' means "the user must pick
+    // from the API-loaded list" and the chat refuses to send until then.
     const perAccount = getOaiModelMap()[meta.id];
     if (perAccount) return perAccount;
-    if (meta.provider === 'nvidia') return DEFAULT_NVIDIA_MODEL;
-    const cfg = vscode.workspace.getConfiguration('keyRotator').get<string>('openRouterModel', '').trim();
-    if (cfg) return cfg;
-    return meta.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : 'gpt-4o-mini';
+    if (meta.provider === 'openrouter') {
+      return vscode.workspace.getConfiguration('keyRotator').get<string>('openRouterModel', '').trim();
+    }
+    return '';
   };
 
   // Cache of the OpenRouter model catalog (free + DeepSeek), for the chat picker.
+  // No hardcoded fallback: if the API is unreachable the list is empty and the
+  // chat asks the user to retry (sin defaults, decisión del usuario).
   let orModelsCache: { at: number; models: { id: string; label: string }[] } | null = null;
-  const ORFALLBACK_MODELS = [
-    { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash (barato)' },
-    { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-    { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra (free)' },
-    { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder (free)' },
-  ];
   async function fetchOpenRouterModels(): Promise<{ id: string; label: string }[]> {
     if (orModelsCache && Date.now() - orModelsCache.at < 30 * 60_000) return orModelsCache.models;
     try {
@@ -338,25 +362,19 @@ export function activate(context: vscode.ExtensionContext) {
         return models;
       }
     } catch {
-      // network error — use fallback
+      // network error — empty list, UI can retry
     }
-    return ORFALLBACK_MODELS;
+    return [];
   }
 
   // NVIDIA Build's catalog is huge (400+ models) and needs the account's own
   // key to list (unlike OpenRouter's public endpoint) — cache per account.
-  const NVFALLBACK_MODELS = [
-    { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (z.ai)' },
-    { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra' },
-    { id: 'qwen/qwen3-coder-480b-a35b-instruct', label: 'Qwen3 Coder 480B' },
-    { id: 'deepseek-ai/deepseek-v4', label: 'DeepSeek V4' },
-  ];
   const nvModelsCache = new Map<string, { at: number; models: { id: string; label: string }[] }>();
   async function fetchNvidiaModels(meta: AccountMeta): Promise<{ id: string; label: string }[]> {
     const cached = nvModelsCache.get(meta.id);
     if (cached && Date.now() - cached.at < 30 * 60_000) return cached.models;
     const key = await keyManager.getApiKey(meta.id);
-    if (!key) return NVFALLBACK_MODELS;
+    if (!key) return [];
     try {
       const res = await fetch(openAIEndpoint(meta) + '/models', {
         headers: { Authorization: `Bearer ${key}` },
@@ -369,9 +387,9 @@ export function activate(context: vscode.ExtensionContext) {
         return models;
       }
     } catch {
-      // network / auth error — use fallback
+      // network / auth error — empty list, UI can retry
     }
-    return NVFALLBACK_MODELS;
+    return [];
   }
 
   const getWebBrowserPref = (): string =>
@@ -720,8 +738,21 @@ export function activate(context: vscode.ExtensionContext) {
         useShell: true,
       };
     },
-    listSessions: () => listNamedSessions(),
-    loadHistory: (id: string) => loadSessionAsync(id),
+    listSessions: () => allSessions(),
+    loadHistory: async (id: string) => {
+      // Agent sessions live in the agent's own store, not the Claude store.
+      if (isAgentSessionId(id)) {
+        const s = agentStore.load(id);
+        if (!s) return null;
+        return {
+          cwd: s.cwd,
+          messages: s.messages
+            .filter((m) => (m.role === 'user' || m.role === 'assistant') && !!m.content)
+            .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.content as string })),
+        };
+      }
+      return loadSessionAsync(id);
+    },
     getSlashCommands: () => listSlashCommands(),
     getCachedModels: (accountId?: string | null) => {
       // Instant, sync: persisted cache from the last successful detection.
@@ -813,8 +844,8 @@ export function activate(context: vscode.ExtensionContext) {
     getApiChatModels: (accountId: string) => {
       const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
-      if (meta.provider === 'nvidia') return nvModelsCache.get(meta.id)?.models ?? NVFALLBACK_MODELS;
-      return orModelsCache?.models ?? ORFALLBACK_MODELS;
+      if (meta.provider === 'nvidia') return nvModelsCache.get(meta.id)?.models ?? [];
+      return orModelsCache?.models ?? [];
     },
     refreshApiChatModels: async (accountId: string) => {
       const meta = resolveMeta(accountId);
@@ -826,6 +857,21 @@ export function activate(context: vscode.ExtensionContext) {
       const meta = resolveMeta(accountId);
       if (meta && model) setOaiModel(meta.id, model);
     },
+    getAgentContext: () => ({
+      defaultCwd: agentDefaultCwd,
+      promptPermission: async (message: string) => {
+        const pick = await vscode.window.showWarningMessage(
+          message,
+          { modal: true },
+          'Permitir',
+          'Permitir todo en este chat'
+        );
+        if (pick === 'Permitir') return 'allow' as const;
+        if (pick === 'Permitir todo en este chat') return 'allowAll' as const;
+        return 'deny' as const; // Cancelar / cerrar el diálogo = denegar
+      },
+      store: agentStore,
+    }),
   };
 
   const activeChatAccountLabel = (): string => {
