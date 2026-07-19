@@ -157,26 +157,19 @@ export class ChatPanel {
 
   /** Push models: cached list instantly, then network-refreshed in background. */
   private postModels(): void {
-    // OpenAI-compatible (OpenRouter) accounts: list the free + DeepSeek catalog
-    // and let the user switch model from the chat dropdown.
-    // '' = API account with NO model chosen yet (sin defaults): show the
-    // placeholder option until the live catalog loads and the user picks one.
-    const apiModel = this.backend.getApiChatModel?.(this.accountId ?? '');
-    if (apiModel !== null && apiModel !== undefined) {
+    // Cada API key ES un modelo: el dropdown "Modelo" lista TODOS los modelos
+    // (uno por cuenta) y elegir uno cambia a esa cuenta (value = accountId).
+    const apiModels = this.backend.listApiAccountModels?.() ?? [];
+    const activeIsApi = this.backend.getApiChatModel?.(this.accountId ?? '') !== null && this.backend.getApiChatModel;
+    if (apiModels.length > 0 && (activeIsApi || !this.accountId)) {
       this.session.setModel(null);
-      const placeholder = { id: '', label: '— elige un modelo —' };
-      const withSelection = (list: { id: string; label: string }[], sel: string) => {
-        if (!sel) return [placeholder, ...list];
-        return list.some((m) => m.id === sel) ? list : [{ id: sel, label: sel }, ...list];
-      };
-      const cached = this.backend.getApiChatModels?.(this.accountId ?? '') ?? [];
-      this.post({ type: 'models', models: withSelection(cached, apiModel), selected: apiModel });
-      this.post({ type: 'model', model: apiModel || 'elige un modelo' });
-      void this.backend.refreshApiChatModels?.(this.accountId ?? '').then((list) => {
-        if (!list) return;
-        const sel = this.backend.getApiChatModel?.(this.accountId ?? '') || '';
-        this.post({ type: 'models', models: withSelection(list, sel), selected: sel });
-      });
+      const models = apiModels.map((m) => ({ id: m.accountId, label: m.model }));
+      const selected = this.accountId && apiModels.some((m) => m.accountId === this.accountId)
+        ? this.accountId
+        : models[0].id;
+      this.post({ type: 'models', models, selected, asAccounts: true });
+      const selModel = apiModels.find((m) => m.accountId === selected)?.model ?? '';
+      this.post({ type: 'model', model: selModel });
       return;
     }
     const apply = async (models: { id: string; label: string }[]) => {
@@ -236,11 +229,16 @@ export class ChatPanel {
 
       case 'setModel': {
         const v = (msg.value ?? '').trim();
-        // OpenAI-compatible (OpenRouter) accounts persist the model per account
-        // instead of the global Claude model setting.
-        if (this.backend.getApiChatModel?.(this.accountId ?? '') !== null && this.backend.setApiChatModel) {
-          this.backend.setApiChatModel(this.accountId ?? '', v);
-          this.post({ type: 'model', model: v });
+        // Agent providers: each model IS an account. If the picked value is an
+        // API account id, switch to that account (= that model).
+        const apiModels = this.backend.listApiAccountModels?.() ?? [];
+        const picked = apiModels.find((m) => m.accountId === v);
+        if (picked) {
+          this.accountId = v;
+          this.session.setAccount(v);
+          this.post(this.metaMsg(this.session.currentSessionId));
+          this.post({ type: 'accounts', accounts: this.accountsForMenu() });
+          this.post({ type: 'model', model: picked.model });
           break;
         }
         this.session.setModel(v || null);
@@ -286,8 +284,8 @@ export class ChatPanel {
       case 'addAccount':
         await vscode.commands.executeCommand('keyRotator.addAccount');
         break;
-      case 'addLoginAccount':
-        await vscode.commands.executeCommand('keyRotator.addLoginAccount');
+      case 'pasteSnippet':
+        await vscode.commands.executeCommand('keyRotator.pasteSnippet');
         break;
       case 'openDashboard':
         await vscode.commands.executeCommand('keyRotator.openDashboard');

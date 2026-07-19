@@ -13,16 +13,15 @@
         <span class="dot"></span>
         <span id="chatTitle">Nueva conversación</span>
       </div>
-      <!-- Account menu (switch API / Add Account / Open Dashboard) -->
+      <!-- Account menu (switch model + Dashboard) -->
       <div class="acct-wrap">
         <button id="acctBtn" class="acct-btn"><span id="activeAccount">—</span> ▾</button>
         <div id="acctMenu" class="menu hidden">
-          <div class="menu-label">Cuenta del chat</div>
+          <div class="menu-label">Modelo</div>
           <div id="acctList"></div>
           <div class="menu-sep"></div>
-          <button class="menu-item" data-act="addAccount">＋ Add Account</button>
-          <button class="menu-item" data-act="addLoginAccount">🔑 Agregar cuenta (Login)</button>
-          <button class="menu-item" data-act="openDashboard">▦ Open Dashboard</button>
+          <button class="menu-item" data-act="pasteSnippet">＋ Agregar modelo (pegar código)</button>
+          <button class="menu-item" data-act="openDashboard">▦ Administrar modelos</button>
         </div>
       </div>
     </header>

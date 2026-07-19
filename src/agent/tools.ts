@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { exec } from 'node:child_process';
 import { resolveInside } from './pathGuard.js';
@@ -41,6 +42,15 @@ export const AGENT_TOOLS = [
   tool('set_working_folder', 'Cambia la carpeta de trabajo del agente (la crea si no existe). Úsala solo si el usuario pide trabajar en otra ruta.', {
     path: { type: 'string', description: 'Ruta absoluta de la nueva carpeta de trabajo.' },
   }),
+  tool('use_skill', 'Carga una skill (metodología/instrucciones) de la biblioteca del usuario y devuelve su contenido para que la sigas en esta tarea.', {
+    name: { type: 'string', description: 'Nombre exacto de la skill (ver la lista en el prompt del sistema).' },
+  }),
+  tool('search_chats', 'Busca en TODAS tus conversaciones pasadas de KeyRotator (memoria). Úsala cuando el usuario haga referencia a algo hablado antes.', {
+    query: { type: 'string', description: 'Texto o tema a buscar en los chats guardados.' },
+  }),
+  tool('read_chat', 'Lee el transcript completo de una conversación pasada (por id devuelto por search_chats).', {
+    id: { type: 'string', description: 'Id de la sesión (agent-…).' },
+  }),
 ];
 
 function tool(
@@ -65,8 +75,27 @@ function tool(
 
 const DENIED = 'DENEGADO por el usuario. No insistas con esta acción; pregúntale al usuario qué hacer.';
 
+/** Reads a skill's SKILL.md (or command .md) from the user's Claude library. */
+export function readSkill(name: string): string {
+  const clean = name.replace(/^\//, '').trim();
+  if (!clean || /[\\/]|\.\./.test(clean)) return `ERROR: nombre de skill inválido: "${name}"`;
+  const home = path.join(os.homedir(), '.claude');
+  for (const p of [
+    path.join(home, 'skills', clean, 'SKILL.md'),
+    path.join(home, 'commands', `${clean}.md`),
+  ]) {
+    try {
+      const content = fs.readFileSync(p, 'utf-8');
+      return content.length > READ_CAP ? content.slice(0, READ_CAP) + '\n…[truncado]' : content;
+    } catch {
+      // try next location
+    }
+  }
+  return `ERROR: no existe la skill "${clean}". Usa un nombre de la lista del prompt del sistema.`;
+}
+
 /** System prompt for the agent (initial working folder baked in). */
-export function agentSystemPrompt(cwd: string): string {
+export function agentSystemPrompt(cwd: string, skillNames: string[] = []): string {
   return [
     'Eres un agente de archivos AUTÓNOMO dentro de VS Code (extensión KeyRotator). Respondes en español, breve y al grano.',
     `Tu carpeta de trabajo es: ${cwd}`,
@@ -83,6 +112,18 @@ export function agentSystemPrompt(cwd: string): string {
     'LÍMITES DUROS (los únicos): escribir/borrar con las herramientas solo dentro de la carpeta de trabajo; leer-fuera/escribir/borrar/ejecutar/cambiar-carpeta pasan por el pop-up de aprobación; si el usuario DENIEGA algo, no lo reintentes — pregúntale qué hacer.',
     '',
     'Entorno: Windows; run_command usa cmd.exe con tu carpeta de trabajo como cwd (timeout 60 s). Para cualquier lógica no trivial usa: powershell -Command "...". Verifica tus resultados (p.ej. lista o relee lo que creaste) antes de reportar éxito.',
+    '',
+    'MEMORIA: tienes acceso a TODAS las conversaciones pasadas de KeyRotator. Si el usuario dice "recuerdas…" o alude a un chat anterior, usa search_chats(query) y luego read_chat(id) — no digas que no recuerdas sin buscar primero.',
+    ...(skillNames.length
+      ? [
+          '',
+          'SKILLS: el usuario tiene una biblioteca de skills (metodologías). Si la tarea encaja con una, llama use_skill(name) y SIGUE sus instrucciones. Disponibles: ' +
+            skillNames.join(', ') +
+            '.',
+        ]
+      : []),
+    '',
+    'Puede haber herramientas extra con prefijo "mcp__" (integraciones MCP del usuario): úsalas cuando apliquen; cada llamada pasa por aprobación.',
   ].join('\n');
 }
 

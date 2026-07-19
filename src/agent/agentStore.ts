@@ -118,4 +118,45 @@ export class AgentStore {
       // already gone
     }
   }
+
+  /**
+   * Cross-chat memory: case-insensitive text search over every stored
+   * conversation. Returns per-session matches with short snippets.
+   */
+  search(query: string, maxSessions = 8): string {
+    const q = query.trim().toLowerCase();
+    if (!q) return 'ERROR: query vacía.';
+    const out: string[] = [];
+    for (const s of this.list()) {
+      const full = this.load(s.id);
+      if (!full) continue;
+      const snippets: string[] = [];
+      for (const m of full.messages) {
+        if ((m.role !== 'user' && m.role !== 'assistant') || !m.content) continue;
+        const idx = m.content.toLowerCase().indexOf(q);
+        if (idx === -1) continue;
+        const from = Math.max(0, idx - 80);
+        snippets.push(`  [${m.role}] …${m.content.slice(from, idx + q.length + 120).replace(/\s+/g, ' ')}…`);
+        if (snippets.length >= 3) break;
+      }
+      if (snippets.length) {
+        out.push(`${s.id} — "${s.title}" (${new Date(s.updatedAt).toLocaleDateString()}):\n${snippets.join('\n')}`);
+        if (out.length >= maxSessions) break;
+      }
+    }
+    return out.length
+      ? `Coincidencias en ${out.length} chat(s):\n\n${out.join('\n\n')}\n\nUsa read_chat(id) para el transcript completo.`
+      : `Sin coincidencias para "${query}" en los chats guardados.`;
+  }
+
+  /** Full transcript of one conversation, formatted for the model. */
+  transcript(id: string): string {
+    const s = this.load(id);
+    if (!s) return `ERROR: no existe el chat "${id}".`;
+    const lines = s.messages
+      .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
+      .map((m) => `[${m.role === 'user' ? 'USUARIO' : 'ASISTENTE'}] ${m.content}`);
+    const text = `Chat "${sessionTitle(s)}" (${new Date(s.updatedAt).toLocaleString()}):\n\n${lines.join('\n\n')}`;
+    return text.length > 40_000 ? text.slice(-40_000) : text; // keep the tail (most recent)
+  }
 }

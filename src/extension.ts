@@ -21,6 +21,7 @@ import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
 import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
 import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
+import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
 import { parseSnippet, snippetHasData } from './core/snippetParser.js';
 
 const HISTORY_KEY = 'keyRotator.history';
@@ -73,6 +74,78 @@ export function activate(context: vscode.ExtensionContext) {
   // Carpeta ÚNICA de trabajo por defecto (pedida por el usuario): todo lo que
   // el agente genere (scripts, temporales, resultados) vive aquí.
   const agentDefaultCwd = () => path.join(os.homedir(), 'Documents', 'KeyRotator');
+
+  // --- MCP: vínculo con los servidores MCP del usuario ----------------------
+  // Lee la MISMA config que Claude Code (~/.claude.json → mcpServers), más un
+  // override opcional (keyRotator.chatMcpConfig). Los servidores gestionados
+  // por claude.ai (Canva/Gmail/Drive) son OAuth y NO se pueden lanzar aquí;
+  // solo los "spawneables" (command+args) del config funcionan.
+  const mcpConnections = new Map<string, McpConnection>();
+  const loadMcpServers = (): Record<string, McpServerConfig> => {
+    const servers: Record<string, McpServerConfig> = {};
+    const merge = (raw: unknown) => {
+      const m = (raw as { mcpServers?: Record<string, McpServerConfig> })?.mcpServers;
+      if (m) for (const [name, cfg] of Object.entries(m)) if (cfg?.command) servers[name] = cfg;
+    };
+    try {
+      merge(JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf-8')));
+    } catch {
+      /* no global claude config */
+    }
+    const override = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMcpConfig', '').trim();
+    if (override) {
+      try {
+        merge(JSON.parse(fs.readFileSync(override, 'utf-8')));
+      } catch {
+        /* bad path — ignore */
+      }
+    }
+    return servers;
+  };
+  const mcpEnabled = () => vscode.workspace.getConfiguration('keyRotator').get<boolean>('agentUseMcp', true);
+  // Resolve every linked server's tools into namespaced agent tools. Cached
+  // connections are reused; a failing server is skipped, never fatal.
+  const getAgentMcpTools = async () => {
+    if (!mcpEnabled()) return [];
+    const servers = loadMcpServers();
+    const out: { def: unknown; call: (argsJson: string) => Promise<string> }[] = [];
+    for (const [server, cfg] of Object.entries(servers)) {
+      let conn = mcpConnections.get(server);
+      if (!conn) {
+        conn = new McpConnection(server, cfg);
+        mcpConnections.set(server, conn);
+      }
+      try {
+        const tools = await conn.listTools();
+        for (const t of tools) {
+          const name = `mcp__${server}__${t.name}`.replace(/[^a-zA-Z0-9_]/g, '_');
+          out.push({
+            def: {
+              type: 'function',
+              function: {
+                name,
+                description: `[MCP ${server}] ${t.description}`.slice(0, 1024),
+                parameters: t.inputSchema,
+              },
+            },
+            call: (argsJson: string) => {
+              let args: Record<string, unknown> = {};
+              try {
+                args = JSON.parse(argsJson || '{}');
+              } catch {
+                /* pass {} */
+              }
+              return conn!.callTool(t.name, args);
+            },
+          });
+        }
+      } catch {
+        // server didn't start / list — skip it this turn
+      }
+    }
+    return out;
+  };
+  context.subscriptions.push(new vscode.Disposable(() => mcpConnections.forEach((c) => c.dispose())));
   const allSessions = () =>
     agentStore
       .list()
@@ -930,6 +1003,13 @@ export function activate(context: vscode.ExtensionContext) {
       const meta = resolveMeta(accountId);
       if (meta && model) setOaiModel(meta.id, model);
     },
+    // Cada API key = un modelo → el dropdown lista todas, orden alfabético.
+    listApiAccountModels: () =>
+      keyManager
+        .getAllMeta()
+        .filter((a) => isOpenAIProvider(a.provider))
+        .map((a) => ({ accountId: a.id, model: openAIModel(a) || a.label }))
+        .sort((x, y) => x.model.localeCompare(y.model)),
     getAgentContext: () => ({
       defaultCwd: agentDefaultCwd,
       promptPermission: async (message: string) => {
@@ -944,6 +1024,8 @@ export function activate(context: vscode.ExtensionContext) {
         return 'deny' as const; // Cancelar / cerrar el diálogo = denegar
       },
       store: agentStore,
+      skillNames: () => listSlashCommands(),
+      mcpTools: () => getAgentMcpTools(),
     }),
   };
 

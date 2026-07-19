@@ -11,7 +11,7 @@ import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSum
 import type { WebChatRunner, WebCaps } from './webChatRunner.js';
 import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
 import { runAgentTurn } from '../agent/agentLoop.js';
-import { executeTool, agentSystemPrompt } from '../agent/tools.js';
+import { AGENT_TOOLS, executeTool, agentSystemPrompt, readSkill } from '../agent/tools.js';
 import { PermissionGate, type PermAnswer, type PermCategory } from '../agent/permissions.js';
 import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore } from '../agent/agentStore.js';
 
@@ -95,18 +95,36 @@ export interface ChatBackend {
   refreshApiChatModels?(accountId: string): Promise<{ id: string; label: string }[] | null>;
   /** Persist the chosen model for an OpenAI account (from the chat dropdown). */
   setApiChatModel?(accountId: string, model: string): void;
+  /**
+   * Every OpenAI-compatible account as a {model→account} pair, alphabetical.
+   * Each API key IS one model, so the chat's model dropdown lists these and
+   * choosing one switches to that account. Empty for non-agent setups.
+   */
+  listApiAccountModels?(): { accountId: string; model: string }[];
   /** Agent support (NVIDIA Build / OpenRouter): permissions UI + own store. */
   getAgentContext?(): AgentBackendContext;
 }
 
+/** A user MCP tool exposed to the agent (namespaced `mcp__<server>__<tool>`). */
+export interface AgentMcpTool {
+  /** OpenAI function-tool definition (name already namespaced). */
+  def: unknown;
+  /** Runs it: server + original tool name resolved by the host. */
+  call(argsJson: string): Promise<string>;
+}
+
 /** What the agent path needs from the extension host. */
 export interface AgentBackendContext {
-  /** Default working folder (Documents\KeyRotator Agent). */
+  /** Default working folder (Documents\KeyRotator). */
   defaultCwd(): string;
   /** Modal permission prompt → allow / allowAll / deny (undefined = deny). */
   promptPermission(message: string, category: PermCategory): Promise<PermAnswer | undefined>;
   /** The agent's own session store (separate from the Claude store). */
   store: AgentStore;
+  /** Names of the user's skills (from ~/.claude/skills + commands), for the prompt. */
+  skillNames(): string[];
+  /** The user's linked MCP tools (from ~/.claude.json / config), namespaced. */
+  mcpTools(): Promise<AgentMcpTool[]>;
 }
 
 /** Providers served by the AGENT loop (tools) instead of the plain chat. */
@@ -350,10 +368,55 @@ export class ChatSession {
     const gate = this.agentGate;
     s.model = oai.model;
     if (s.messages.length === 0) {
-      s.messages.push({ role: 'system', content: agentSystemPrompt(s.cwd) });
+      s.messages.push({ role: 'system', content: agentSystemPrompt(s.cwd, ctx.skillNames()) });
     }
     s.messages.push({ role: 'user', content: text });
     handlers.onModel(oai.model);
+
+    // The user's linked MCP tools (namespaced mcp__server__tool) join the
+    // built-in file/skill/memory tools for this turn.
+    let mcpTools: AgentMcpTool[] = [];
+    try {
+      mcpTools = await ctx.mcpTools();
+    } catch {
+      mcpTools = []; // a broken MCP server must not break the chat
+    }
+    const mcpByName = new Map(mcpTools.map((t) => [(t.def as { function: { name: string } }).function.name, t]));
+    const tools = [...AGENT_TOOLS, ...mcpTools.map((t) => t.def)];
+
+    const execute = async (name: string, args: string): Promise<string> => {
+      // Built-in memory tools resolve here (they need the store); skills read
+      // from disk; MCP calls route to the linked server behind an approval.
+      if (name === 'search_chats') {
+        try {
+          return ctx.store.search(String(JSON.parse(args || '{}').query ?? ''));
+        } catch {
+          return 'ERROR: query inválida.';
+        }
+      }
+      if (name === 'read_chat') {
+        try {
+          return ctx.store.transcript(String(JSON.parse(args || '{}').id ?? ''));
+        } catch {
+          return 'ERROR: id inválido.';
+        }
+      }
+      if (name === 'use_skill') {
+        try {
+          return readSkill(String(JSON.parse(args || '{}').name ?? ''));
+        } catch {
+          return 'ERROR: nombre de skill inválido.';
+        }
+      }
+      const mcp = mcpByName.get(name);
+      if (mcp) {
+        if (!(await gate.ask('mcp', `${name} ${args.slice(0, 200)}`))) {
+          return 'DENEGADO por el usuario. No insistas con esta integración.';
+        }
+        return mcp.call(args);
+      }
+      return executeTool(name, args, { getCwd: () => s.cwd, setCwd: (d) => (s.cwd = d), gate });
+    };
 
     const cap = ChatSession.RPM_CAPS[oai.provider];
     const res = await runAgentTurn({
@@ -361,8 +424,8 @@ export class ChatSession {
       apiKey: oai.apiKey,
       model: oai.model,
       messages: s.messages,
-      execute: (name, args) =>
-        executeTool(name, args, { getCwd: () => s.cwd, setCwd: (d) => (s.cwd = d), gate }),
+      tools,
+      execute,
       onDelta: (t) => handlers.onDelta(t),
       onToolStart: (name, args) => handlers.onInfo(`🔧 ${name} ${args.slice(0, 140)}`),
       maxPerMinute: cap,

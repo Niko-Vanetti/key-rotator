@@ -96,6 +96,8 @@ export interface AgentTurnOpts {
   signal?: AbortSignal;
   /** Extra request params from the pasted sample (temperature, top_p, …). */
   params?: Record<string, number>;
+  /** Full tool list for this turn (defaults to AGENT_TOOLS). */
+  tools?: unknown[];
 }
 
 export type AgentTurnResult = { text: string } | { error: string; rateLimited?: boolean };
@@ -153,7 +155,7 @@ async function streamCall(
       body: JSON.stringify({
         model: opts.model,
         messages: opts.messages,
-        tools: AGENT_TOOLS,
+        tools: opts.tools ?? AGENT_TOOLS,
         stream: true,
         ...(opts.params ?? {}),
       }),

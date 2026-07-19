@@ -5,7 +5,7 @@
  * "Allow all" is per CATEGORY and per CONVERSATION (reset() on new chat).
  */
 
-export type PermCategory = 'read' | 'write' | 'delete' | 'command' | 'folder';
+export type PermCategory = 'read' | 'write' | 'delete' | 'command' | 'folder' | 'mcp';
 
 export type PermAnswer = 'allow' | 'allowAll' | 'deny';
 
@@ -18,6 +18,7 @@ export const CATEGORY_LABELS: Record<PermCategory, string> = {
   delete: 'borrar archivos',
   command: 'ejecutar comandos',
   folder: 'cambiar la carpeta de trabajo',
+  mcp: 'usar una integración MCP',
 };
 
 export class PermissionGate {
