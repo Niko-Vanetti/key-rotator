@@ -100,13 +100,15 @@ export class ChatPanel {
     return this.activeAccountLabel();
   }
 
-  /** Name to show on assistant bubbles: the web provider (DeepSeek/…) or Claude. */
+  /**
+   * Name for assistant bubbles: the account's model (z-ai/glm-5.2) or web
+   * provider. Falls back to the GLOBALLY selected account when this panel has
+   * no per-panel pin ('' → backend resolves the preferred one), and only says
+   * 'Claude' when the active account really is Claude.
+   */
   private currentAssistantName(): string {
-    if (this.accountId) {
-      const name = this.backend.getWebProviderName?.(this.accountId);
-      if (name) return name;
-    }
-    return 'Claude';
+    const name = this.backend.getWebProviderName?.(this.accountId ?? '');
+    return name || 'Claude';
   }
 
   private metaMsg(sessionId: string | null, activeAccount?: string): Record<string, unknown> {

@@ -70,7 +70,9 @@ export function activate(context: vscode.ExtensionContext) {
     // best-effort migration
   }
   const agentStore = new AgentStore(agentChatsDir);
-  const agentDefaultCwd = () => path.join(os.homedir(), 'Documents', 'KeyRotator Agent');
+  // Carpeta ÚNICA de trabajo por defecto (pedida por el usuario): todo lo que
+  // el agente genere (scripts, temporales, resultados) vive aquí.
+  const agentDefaultCwd = () => path.join(os.homedir(), 'Documents', 'KeyRotator');
   const allSessions = () =>
     agentStore
       .list()
@@ -352,6 +354,15 @@ export function activate(context: vscode.ExtensionContext) {
     }
     return '';
   };
+
+  // Migración de nombres: entradas viejas tipo "NVIDIA Build" pasan a llamarse
+  // como su MODELO (cada key = un modelo, así se listan y ordenan).
+  for (const a of keyManager.getAllMeta()) {
+    if (isOpenAIProvider(a.provider)) {
+      const model = openAIModel(a);
+      if (model && a.label !== model) void keyManager.updateAccountMeta(a.id, { label: model });
+    }
+  }
 
   /**
    * The one-paste setup engine (dashboard box AND the 📋 command): parses the

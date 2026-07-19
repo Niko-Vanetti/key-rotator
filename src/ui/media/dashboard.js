@@ -37,17 +37,15 @@ function renderAccounts(accounts) {
     return;
   }
 
+  // Lista mínima (pedido del usuario): el MODELO y su botón Eliminar, nada más.
   for (const acc of accounts) {
     const card = document.createElement('div');
     card.className = 'account-card';
     card.innerHTML = `
       <div class="meta">
         <span class="label">${acc.label}</span>
-        <span class="sub">${acc.provider} · prioridad ${acc.priority} · ${acc.switchMode}</span>
       </div>
-      <span class="badge ${acc.status}">${acc.status}</span>
       <div class="actions">
-        <button data-action="toggleMode" data-id="${acc.id}">${acc.switchMode === 'auto' ? 'Auto' : 'Confirmar'}</button>
         <button data-action="delete" data-id="${acc.id}">Eliminar</button>
       </div>
     `;
@@ -56,9 +54,6 @@ function renderAccounts(accounts) {
 
   list.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
     btn.addEventListener('click', () => vscode.postMessage({ type: 'deleteAccount', id: btn.dataset.id }));
-  });
-  list.querySelectorAll('button[data-action="toggleMode"]').forEach((btn) => {
-    btn.addEventListener('click', () => vscode.postMessage({ type: 'toggleSwitchMode', id: btn.dataset.id }));
   });
 }
 
