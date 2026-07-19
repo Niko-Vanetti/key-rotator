@@ -9,37 +9,24 @@ document.querySelectorAll('.tab').forEach((tab) => {
   });
 });
 
-const newApiKey = document.getElementById('newApiKey');
-let detectTimer;
-newApiKey.addEventListener('input', () => {
-  clearTimeout(detectTimer);
-  const value = newApiKey.value.trim();
-  if (value.length < 6) return;
-  detectTimer = setTimeout(() => {
-    vscode.postMessage({ type: 'detectProvider', apiKey: value });
-  }, 400);
-});
-
+// Un solo pegado: el código de ejemplo (o la key sola) va tal cual al host,
+// que extrae proveedor/endpoint/modelo/key/params y crea la cuenta.
 document.getElementById('addBtn').addEventListener('click', () => {
+  const text = document.getElementById('pasteBox').value.trim();
   const label = document.getElementById('newLabel').value.trim();
-  const apiKey = document.getElementById('newApiKey').value.trim();
-  const provider = document.getElementById('newProvider').value.trim();
-  const envVar = document.getElementById('newEnvVar').value.trim();
-  const endpoint = document.getElementById('newEndpoint').value.trim();
-
-  if (!label || !apiKey || !provider || !envVar) {
-    vscode.postMessage({ type: 'error', message: 'Completá nombre, API key, proveedor y variable de entorno.' });
+  if (!text) {
+    vscode.postMessage({ type: 'error', message: 'Pega el código de ejemplo o tu API key en la caja.' });
     return;
   }
+  vscode.postMessage({ type: 'addFromPaste', text, label: label || undefined });
+});
 
-  vscode.postMessage({ type: 'addAccount', account: { label, apiKey, provider, envVar, endpoint: endpoint || undefined } });
-
-  document.getElementById('newLabel').value = '';
-  document.getElementById('newApiKey').value = '';
-  document.getElementById('newProvider').value = '';
-  document.getElementById('newEnvVar').value = '';
-  document.getElementById('newEndpoint').value = '';
-  document.getElementById('detectHint').textContent = '';
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'pasteResult' && e.data.ok) {
+    document.getElementById('pasteBox').value = '';
+    document.getElementById('newLabel').value = '';
+    document.getElementById('detectHint').textContent = e.data.summary || '';
+  }
 });
 
 function renderAccounts(accounts) {
@@ -138,16 +125,6 @@ window.addEventListener('message', (event) => {
       renderAccounts(msg.accounts);
       renderHistory(msg.history);
       renderStats(msg.stats, msg.accounts, msg.history);
-      break;
-    case 'detection':
-      document.getElementById('newProvider').value = msg.result.provider;
-      document.getElementById('newEnvVar').value = msg.result.envVar;
-      document.getElementById('detectHint').textContent =
-        msg.result.source === 'pattern'
-          ? `Detectado: ${msg.result.displayName} ✓`
-          : msg.result.source === 'ai'
-          ? `Identificado via IA: ${msg.result.displayName}`
-          : 'No se pudo identificar el proveedor automáticamente.';
       break;
   }
 });

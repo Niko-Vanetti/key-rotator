@@ -248,6 +248,8 @@ export function activate(context: vscode.ExtensionContext) {
       return { provider: '', displayName: '', envVar: '', source: 'unknown' as const };
     },
     generateId: () => randomUUID(),
+    // Un pegado → cuenta lista (mismo motor que el comando 'Pegar código').
+    addFromSnippet: (text: string, label?: string) => addAccountFromText(text, label),
   };
 
   // --- chat backend ------------------------------------------------------
@@ -400,6 +402,89 @@ export function activate(context: vscode.ExtensionContext) {
       // network / auth error — empty list, UI can retry
     }
     return [];
+  }
+
+  /**
+   * The one-paste setup engine (dashboard box AND the 📋 command): parses the
+   * sample code / bare key, asks for the real key if the sample carries a
+   * placeholder, creates the account (endpoint+model+params included), makes
+   * it the preferred chat account and opens the chat.
+   */
+  async function addAccountFromText(text: string, labelOverride?: string): Promise<{ ok: boolean; summary?: string }> {
+    const parsed = parseSnippet(text);
+    if (!snippetHasData(parsed)) {
+      // Not NVIDIA/OpenRouter-shaped: maybe a bare key of another provider
+      // (Anthropic, Gemini, …) — keep the old detection path working.
+      const token = text.trim();
+      if (token && !/\s/.test(token)) {
+        const det = await dashboardCallbacks.detectProvider(token);
+        if (det.provider) {
+          const same = keyManager.getAllMeta().filter((a) => a.provider === det.provider);
+          await keyManager.addAccount({
+            id: randomUUID(),
+            provider: det.provider,
+            label: labelOverride || `${det.displayName} ${same.length + 1}`,
+            apiKey: token,
+            envVar: det.envVar,
+            priority: same.length + 1,
+            switchMode: 'confirm',
+            status: 'active',
+          });
+          refreshUI();
+          return { ok: true, summary: `Cuenta de ${det.displayName} agregada ✓` };
+        }
+      }
+      void vscode.window.showErrorMessage(
+        'KeyRotator: no encontré endpoint, modelo ni API key en lo pegado. Copia el bloque de código completo de build.nvidia.com.'
+      );
+      return { ok: false };
+    }
+
+    const provider = parsed.provider ?? 'nvidia';
+    let apiKey = parsed.apiKey;
+    if (!apiKey) {
+      apiKey =
+        (
+          await vscode.window.showInputBox({
+            title: 'Tu API key',
+            prompt: `El código trae un placeholder — pega tu key real de ${provider === 'nvidia' ? 'NVIDIA Build (nvapi-…)' : 'OpenRouter (sk-or-…)'}`,
+            password: true,
+            ignoreFocusOut: true,
+          })
+        )?.trim() || null;
+      if (!apiKey) return { ok: false };
+    }
+
+    const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === provider);
+    const id = randomUUID();
+    const baseLabel = provider === 'nvidia' ? 'NVIDIA Build' : 'OpenRouter';
+    const label = labelOverride || (sameProvider.length ? `${baseLabel} ${sameProvider.length + 1}` : baseLabel);
+    await keyManager.addAccount({
+      id,
+      provider,
+      label,
+      apiKey,
+      envVar: provider === 'nvidia' ? 'NVIDIA_API_KEY' : 'OPENROUTER_API_KEY',
+      endpoint: parsed.baseUrl ?? undefined,
+      priority: sameProvider.length + 1,
+      switchMode: 'auto',
+      status: 'active',
+    });
+    if (parsed.model) setOaiModel(id, parsed.model);
+    if (Object.keys(parsed.params).length) setOaiParams(id, parsed.params);
+    await context.globalState.update('keyRotator.preferredChatAccount', id);
+    refreshUI();
+    ChatPanel.refreshIfOpen();
+    const resumen = [
+      `cuenta "${label}"`,
+      parsed.model ? `modelo ${parsed.model}` : 'modelo: elígelo en el chat',
+      Object.keys(parsed.params).length ? `params ${JSON.stringify(parsed.params)}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    void vscode.window.showInformationMessage(`KeyRotator: listo — ${resumen}. Abriendo el chat…`);
+    await vscode.commands.executeCommand('keyRotator.openChat');
+    return { ok: true, summary: `${resumen} ✓` };
   }
 
   const getWebBrowserPref = (): string =>
@@ -987,66 +1072,20 @@ export function activate(context: vscode.ExtensionContext) {
     // Configuración en UN pegado: lee el código de ejemplo de build.nvidia.com
     // (o OpenRouter) del portapapeles y saca endpoint + key + modelo + params.
     vscode.commands.registerCommand('keyRotator.pasteSnippet', async () => {
-      let parsed = parseSnippet((await vscode.env.clipboard.readText()).trim());
-      if (!snippetHasData(parsed)) {
-        const typed = await vscode.window.showInputBox({
-          title: 'Pegar código (NVIDIA Build / OpenRouter)',
-          prompt: 'Pega el código de ejemplo (Python/JS) tal cual, o solo tu API key',
-          placeHolder: 'from openai import OpenAI … base_url="https://integrate.api.nvidia.com/v1" …',
-          ignoreFocusOut: true,
-        });
-        if (!typed) return;
-        parsed = parseSnippet(typed);
-        if (!snippetHasData(parsed)) {
-          void vscode.window.showErrorMessage(
-            'KeyRotator: no encontré endpoint, modelo ni API key en lo pegado. Copia el bloque de código completo de build.nvidia.com.'
-          );
-          return;
-        }
-      }
-      const provider = parsed.provider ?? 'nvidia';
-      let apiKey = parsed.apiKey;
-      if (!apiKey) {
-        apiKey =
+      let text = (await vscode.env.clipboard.readText()).trim();
+      if (!snippetHasData(parseSnippet(text))) {
+        text =
           (
             await vscode.window.showInputBox({
-              title: 'Tu API key',
-              prompt: `El código trae un placeholder — pega tu key real de ${provider === 'nvidia' ? 'NVIDIA Build (nvapi-…)' : 'OpenRouter (sk-or-…)'}`,
-              password: true,
+              title: 'Pegar código (NVIDIA Build / OpenRouter)',
+              prompt: 'Pega el código de ejemplo (Python/JS) tal cual, o solo tu API key',
+              placeHolder: 'from openai import OpenAI … base_url="https://integrate.api.nvidia.com/v1" …',
               ignoreFocusOut: true,
             })
-          )?.trim() || null;
-        if (!apiKey) return;
+          )?.trim() || '';
+        if (!text) return;
       }
-      const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === provider);
-      const id = randomUUID();
-      const baseLabel = provider === 'nvidia' ? 'NVIDIA Build' : 'OpenRouter';
-      const label = sameProvider.length ? `${baseLabel} ${sameProvider.length + 1}` : baseLabel;
-      await keyManager.addAccount({
-        id,
-        provider,
-        label,
-        apiKey,
-        envVar: provider === 'nvidia' ? 'NVIDIA_API_KEY' : 'OPENROUTER_API_KEY',
-        endpoint: parsed.baseUrl ?? undefined,
-        priority: sameProvider.length + 1,
-        switchMode: 'auto',
-        status: 'active',
-      });
-      if (parsed.model) setOaiModel(id, parsed.model);
-      if (Object.keys(parsed.params).length) setOaiParams(id, parsed.params);
-      await context.globalState.update('keyRotator.preferredChatAccount', id);
-      refreshUI();
-      ChatPanel.refreshIfOpen();
-      const resumen = [
-        `cuenta "${label}"`,
-        parsed.model ? `modelo ${parsed.model}` : 'modelo: elígelo en el chat',
-        Object.keys(parsed.params).length ? `params ${JSON.stringify(parsed.params)}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
-      void vscode.window.showInformationMessage(`KeyRotator: listo — ${resumen}. Abriendo el chat…`);
-      await vscode.commands.executeCommand('keyRotator.openChat');
+      await addAccountFromText(text);
     }),
 
     vscode.commands.registerCommand('keyRotator.moveAccountUp', async (node?: { account?: AccountMeta }) => {

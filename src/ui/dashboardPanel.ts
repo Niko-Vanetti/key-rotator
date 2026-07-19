@@ -15,6 +15,8 @@ export interface DashboardCallbacks {
   toggleSwitchMode(id: string): Promise<void>;
   detectProvider(apiKey: string): Promise<DetectionResult>;
   generateId(): string;
+  /** One-paste setup: sample code (or bare key) → configured account. */
+  addFromSnippet(text: string, label?: string): Promise<{ ok: boolean; summary?: string }>;
 }
 
 interface IncomingMessage {
@@ -22,6 +24,8 @@ interface IncomingMessage {
   id?: string;
   apiKey?: string;
   message?: string;
+  text?: string;
+  label?: string;
   account?: {
     label: string;
     apiKey: string;
@@ -92,6 +96,13 @@ export class DashboardPanel {
           status: 'active',
         });
         this.postState();
+        break;
+      }
+      case 'addFromPaste': {
+        if (!msg.text) return;
+        const res = await this.callbacks.addFromSnippet(msg.text, msg.label);
+        this.postState();
+        this.panel.webview.postMessage({ type: 'pasteResult', ok: res.ok, summary: res.summary ?? '' });
         break;
       }
       case 'deleteAccount':

@@ -87,6 +87,15 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vsco
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+.add-form textarea {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  padding: 8px;
+  resize: vertical;
+}
 .add-form input, .add-form select {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);

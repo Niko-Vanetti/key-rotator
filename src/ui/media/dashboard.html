@@ -15,11 +15,9 @@
 
   <section id="keys" class="panel active">
     <div class="add-form">
-      <input id="newLabel" placeholder="Nombre (ej: Claude Cuenta 2)" />
-      <input id="newApiKey" placeholder="Pega la API key aquí" type="password" />
-      <input id="newProvider" placeholder="Proveedor (auto-detectado)" />
-      <input id="newEnvVar" placeholder="Variable de entorno (ej: ANTHROPIC_API_KEY)" />
-      <input id="newEndpoint" placeholder="Endpoint (opcional, para Ollama/custom)" class="full" />
+      <textarea id="pasteBox" class="full" rows="7"
+        placeholder="Pega aquí el código de ejemplo de build.nvidia.com u OpenRouter (Python/JS), o solo tu API key.&#10;&#10;Se detecta solo: proveedor, endpoint, modelo, API key y parámetros (temperature, top_p, max_tokens, seed)."></textarea>
+      <input id="newLabel" class="full" placeholder="Nombre (opcional)" />
       <div class="detect-hint" id="detectHint"></div>
       <button id="addBtn" class="full">Agregar cuenta</button>
     </div>
