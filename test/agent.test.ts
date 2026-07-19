@@ -121,6 +121,41 @@ test('two parallel tool calls keep separate indexes', () => {
   assert.equal(calls[1].function.name, 'list_directory');
 });
 
+// ---- read outside the working folder (permission-gated) ---------------------
+
+test('read_file outside the cwd asks permission and works when allowed', async (t) => {
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const { executeTool } = await import('../src/agent/tools.js');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-cwd-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-out-'));
+  t.after(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+  const file = path.join(outside, 'x.txt');
+  fs.writeFileSync(file, 'CONTENIDO-EXTERNO');
+  const asked: string[] = [];
+  const mkCtx = (answer: 'allow' | 'deny') => ({
+    getCwd: () => cwd,
+    setCwd: () => {},
+    gate: new PermissionGate(async (_m, c) => {
+      asked.push(c);
+      return answer;
+    }),
+  });
+  // allowed → real content; category asked = 'read'
+  const ok = await executeTool('read_file', JSON.stringify({ path: file }), mkCtx('allow'));
+  assert.equal(ok, 'CONTENIDO-EXTERNO');
+  assert.deepEqual(asked, ['read']);
+  // denied → DENEGADO, file not exposed
+  const no = await executeTool('read_file', JSON.stringify({ path: file }), mkCtx('deny'));
+  assert.match(no, /DENEGADO/);
+  // relative escape still hard-rejected (no prompt)
+  const esc = await executeTool('read_file', JSON.stringify({ path: '..\\algo.txt' }), mkCtx('allow'));
+  assert.match(esc, /FUERA de la carpeta/);
+});
+
 // ---- agent loop (with a fake fetch) ----------------------------------------
 
 function sseResponse(lines: object[]): Response {

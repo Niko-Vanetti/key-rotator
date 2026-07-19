@@ -32,7 +32,7 @@
         },
         {
           "id": "keyRotatorAccounts",
-          "name": "Accounts"
+          "name": "API Keys"
         }
       ]
     },
@@ -160,11 +160,6 @@
           "command": "keyRotator.addAccount",
           "when": "view == keyRotatorAccounts",
           "group": "navigation@1"
-        },
-        {
-          "command": "keyRotator.addLoginAccount",
-          "when": "view == keyRotatorAccounts",
-          "group": "navigation@2"
         },
         {
           "command": "keyRotator.openDashboard",

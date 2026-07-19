@@ -5,7 +5,7 @@
  * "Allow all" is per CATEGORY and per CONVERSATION (reset() on new chat).
  */
 
-export type PermCategory = 'write' | 'delete' | 'command' | 'folder';
+export type PermCategory = 'read' | 'write' | 'delete' | 'command' | 'folder';
 
 export type PermAnswer = 'allow' | 'allowAll' | 'deny';
 
@@ -13,6 +13,7 @@ export type PermAnswer = 'allow' | 'allowAll' | 'deny';
 export type PermPrompt = (message: string, category: PermCategory) => Promise<PermAnswer | undefined>;
 
 export const CATEGORY_LABELS: Record<PermCategory, string> = {
+  read: 'leer FUERA de la carpeta de trabajo',
   write: 'escribir archivos',
   delete: 'borrar archivos',
   command: 'ejecutar comandos',

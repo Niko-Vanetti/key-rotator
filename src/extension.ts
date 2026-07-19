@@ -40,8 +40,10 @@ export function activate(context: vscode.ExtensionContext) {
   const keyManager = new KeyManager(context);
   const registry = new RegistryUpdater(context);
   const statusBar = new StatusBarManager();
+  // Lista de API keys en orden ALFABÉTICO por etiqueta (= modelo).
+  const sortedMeta = () => [...keyManager.getAllMeta()].sort((a, b) => a.label.localeCompare(b.label));
   const treeProvider = new AccountsTreeProvider(
-    () => keyManager.getAllMeta(),
+    () => sortedMeta(),
     () => context.globalState.get<string>('keyRotator.preferredChatAccount')
   );
 
@@ -189,7 +191,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const dashboardCallbacks: DashboardCallbacks = {
     getState: () => ({
-      accounts: keyManager.getAllMeta(),
+      accounts: sortedMeta(),
       history: getHistory(),
       stats: computeStats(getHistory()),
     }),
@@ -351,59 +353,6 @@ export function activate(context: vscode.ExtensionContext) {
     return '';
   };
 
-  // Cache of the OpenRouter model catalog (free + DeepSeek), for the chat picker.
-  // No hardcoded fallback: if the API is unreachable the list is empty and the
-  // chat asks the user to retry (sin defaults, decisión del usuario).
-  let orModelsCache: { at: number; models: { id: string; label: string }[] } | null = null;
-  async function fetchOpenRouterModels(): Promise<{ id: string; label: string }[]> {
-    if (orModelsCache && Date.now() - orModelsCache.at < 30 * 60_000) return orModelsCache.models;
-    try {
-      const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(10000) });
-      const json = (await res.json()) as { data?: { id: string; pricing?: { prompt?: string; completion?: string } }[] };
-      const all = json.data ?? [];
-      const free = all.filter((m) => /:free$/.test(m.id));
-      const deepseek = all.filter((m) => /^deepseek\//.test(m.id) && !/:free$/.test(m.id));
-      const pick = [...deepseek, ...free];
-      const models = pick.map((m) => {
-        const isFree = /:free$/.test(m.id);
-        const out = (Number(m.pricing?.completion ?? 0) * 1e6).toFixed(2);
-        return { id: m.id, label: isFree ? `${m.id} (free)` : `${m.id} ($${out}/1M)` };
-      });
-      if (models.length > 0) {
-        orModelsCache = { at: Date.now(), models };
-        return models;
-      }
-    } catch {
-      // network error — empty list, UI can retry
-    }
-    return [];
-  }
-
-  // NVIDIA Build's catalog is huge (400+ models) and needs the account's own
-  // key to list (unlike OpenRouter's public endpoint) — cache per account.
-  const nvModelsCache = new Map<string, { at: number; models: { id: string; label: string }[] }>();
-  async function fetchNvidiaModels(meta: AccountMeta): Promise<{ id: string; label: string }[]> {
-    const cached = nvModelsCache.get(meta.id);
-    if (cached && Date.now() - cached.at < 30 * 60_000) return cached.models;
-    const key = await keyManager.getApiKey(meta.id);
-    if (!key) return [];
-    try {
-      const res = await fetch(openAIEndpoint(meta) + '/models', {
-        headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(10000),
-      });
-      const json = (await res.json()) as { data?: { id: string }[] };
-      const models = (json.data ?? []).map((m) => ({ id: m.id, label: m.id }));
-      if (models.length > 0) {
-        nvModelsCache.set(meta.id, { at: Date.now(), models });
-        return models;
-      }
-    } catch {
-      // network / auth error — empty list, UI can retry
-    }
-    return [];
-  }
-
   /**
    * The one-paste setup engine (dashboard box AND the 📋 command): parses the
    * sample code / bare key, asks for the real key if the sample carries a
@@ -457,8 +406,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === provider);
     const id = randomUUID();
-    const baseLabel = provider === 'nvidia' ? 'NVIDIA Build' : 'OpenRouter';
-    const label = labelOverride || (sameProvider.length ? `${baseLabel} ${sameProvider.length + 1}` : baseLabel);
+    // La entrada se llama como su MODELO (cada key = un modelo, pedido del
+    // usuario); fallback al proveedor si el código pegado no traía modelo.
+    const baseLabel = parsed.model || (provider === 'nvidia' ? 'NVIDIA Build' : 'OpenRouter');
+    const label = labelOverride || baseLabel;
     await keyManager.addAccount({
       id,
       provider,
@@ -937,9 +888,10 @@ export function activate(context: vscode.ExtensionContext) {
         const key = webProviderKey(meta.provider);
         return WEB_PROVIDER_NAMES[key] ?? key;
       }
-      // OpenAI-compatible API accounts: label the bubble with the provider.
+      // OpenAI-compatible API accounts: label the bubble with the MODEL
+      // (la cuenta ES el modelo — pedido del usuario), fallback al proveedor.
       if (isOpenAIProvider(meta.provider)) {
-        return OPENAI_DISPLAY_NAMES[meta.provider] ?? meta.provider;
+        return openAIModel(meta) || OPENAI_DISPLAY_NAMES[meta.provider] || meta.provider;
       }
       return null;
     },
@@ -948,17 +900,20 @@ export function activate(context: vscode.ExtensionContext) {
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
       return openAIModel(meta);
     },
+    // La cuenta ES el modelo (viene del código pegado): el selector muestra
+    // SOLO ese modelo, no el catálogo del proveedor (los demás ni funcionan
+    // con la key — pedido explícito del usuario).
     getApiChatModels: (accountId: string) => {
       const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
-      if (meta.provider === 'nvidia') return nvModelsCache.get(meta.id)?.models ?? [];
-      return orModelsCache?.models ?? [];
+      const model = openAIModel(meta);
+      return model ? [{ id: model, label: model }] : [];
     },
     refreshApiChatModels: async (accountId: string) => {
       const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
-      if (meta.provider === 'nvidia') return fetchNvidiaModels(meta);
-      return fetchOpenRouterModels();
+      const model = openAIModel(meta);
+      return model ? [{ id: model, label: model }] : [];
     },
     setApiChatModel: (accountId: string, model: string) => {
       const meta = resolveMeta(accountId);

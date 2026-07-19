@@ -84,6 +84,7 @@ export class ChatPanel {
     for (const p of ChatPanel.panels) {
       p.post(p.metaMsg(p.session.currentSessionId));
       p.post({ type: 'accounts', accounts: p.accountsForMenu() });
+      p.postModels();
     }
   }
 
