@@ -50,14 +50,30 @@ export function activate(context: vscode.ExtensionContext) {
   seedScanCache(context.globalState.get('keyRotator.scanCache', {}));
 
   // --- agent (NVIDIA Build / OpenRouter con herramientas) -------------------
-  const agentStore = new AgentStore(vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath);
+  // Herramienta INDEPENDIENTE de Claude Code: sus chats viven en una carpeta
+  // visible de Documentos, y el árbol de Chats lista SOLO estos (nunca los de
+  // Claude Code — borrar aquí jamás toca el almacén de Claude).
+  const agentChatsDir = path.join(os.homedir(), 'Documents', 'KeyRotator Chats');
+  // Migración: sesiones creadas cuando el almacén vivía en globalStorage.
+  try {
+    const oldDir = vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath;
+    if (fs.existsSync(oldDir)) {
+      fs.mkdirSync(agentChatsDir, { recursive: true });
+      for (const f of fs.readdirSync(oldDir).filter((f) => f.endsWith('.json'))) {
+        const dest = path.join(agentChatsDir, f);
+        if (!fs.existsSync(dest)) fs.renameSync(path.join(oldDir, f), dest);
+      }
+    }
+  } catch {
+    // best-effort migration
+  }
+  const agentStore = new AgentStore(agentChatsDir);
   const agentDefaultCwd = () => path.join(os.homedir(), 'Documents', 'KeyRotator Agent');
-  // Agent sessions appear in the Chats tree alongside Claude's (⚡ prefix).
   const allSessions = () =>
-    [
-      ...listNamedSessions(),
-      ...agentStore.list().map((s) => ({ id: s.id, name: `⚡ ${s.title}`, cwd: '', mtime: s.updatedAt, filePath: '' })),
-    ].sort((a, b) => b.mtime - a.mtime);
+    agentStore
+      .list()
+      .map((s) => ({ id: s.id, name: s.title, cwd: '', mtime: s.updatedAt, filePath: '' }))
+      .sort((a, b) => b.mtime - a.mtime);
 
   const sessionsProvider = new SessionsTreeProvider(() => allSessions());
 
@@ -73,32 +89,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Auto-sync the Chats list with the shared Claude store: watch
   // ~/.claude/projects and refresh when sessions are created/renamed/updated
-  // (e.g. you start or title a chat in native Claude Code). Debounced.
+  // Auto-refresh the Chats tree when the agent's Documents folder changes.
+  // (No watcher on Claude Code's store: the tree no longer lists those chats.)
   try {
-    let watchTimer: NodeJS.Timeout | undefined;
-    const watcher = fs.watch(defaultProjectsRoot(), { recursive: true }, () => {
-      clearTimeout(watchTimer);
-      watchTimer = setTimeout(() => {
-        sessionsProvider.refresh();
-        persistScanCache();
-      }, 700);
-    });
-    context.subscriptions.push(new vscode.Disposable(() => watcher.close()));
-  } catch {
-    // store not present yet / watch unsupported — non-fatal
-  }
-
-  // Same auto-refresh for the agent's own session store.
-  try {
-    fs.mkdirSync(vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath, { recursive: true });
+    fs.mkdirSync(agentChatsDir, { recursive: true });
     let agentWatchTimer: NodeJS.Timeout | undefined;
-    const agentWatcher = fs.watch(
-      vscode.Uri.joinPath(context.globalStorageUri, 'agent-sessions').fsPath,
-      () => {
-        clearTimeout(agentWatchTimer);
-        agentWatchTimer = setTimeout(() => sessionsProvider.refresh(), 700);
-      }
-    );
+    const agentWatcher = fs.watch(agentChatsDir, () => {
+      clearTimeout(agentWatchTimer);
+      agentWatchTimer = setTimeout(() => sessionsProvider.refresh(), 700);
+    });
     context.subscriptions.push(new vscode.Disposable(() => agentWatcher.close()));
   } catch {
     // watch unsupported — non-fatal
@@ -971,32 +970,16 @@ export function activate(context: vscode.ExtensionContext) {
       ChatPanel.openSession(context.extensionUri, chatBackend, activeChatAccountLabel, null);
     }),
 
-    // 🗑 en cada chat del árbol: borra sesiones del agente (almacén propio) o
-    // de Claude (almacén compartido — desaparece también en Claude Code).
+    // 🗑 en cada chat del árbol. Solo borra chats del AGENTE (carpeta propia
+    // en Documentos) — KeyRotator nunca toca el almacén de Claude Code.
     vscode.commands.registerCommand(
       'keyRotator.deleteChat',
-      async (node?: { session?: { id: string; name: string; filePath: string } }) => {
+      async (node?: { session?: { id: string; name: string } }) => {
         const s = node?.session;
-        if (!s) return;
-        const esAgente = isAgentSessionId(s.id);
-        const pick = await vscode.window.showWarningMessage(
-          esAgente
-            ? `¿Borrar el chat del agente "${s.name}"?`
-            : `¿Borrar el chat "${s.name}"?\n\nEs el almacén compartido: también desaparecerá de Claude Code.`,
-          { modal: true },
-          'Borrar'
-        );
+        if (!s || !isAgentSessionId(s.id)) return;
+        const pick = await vscode.window.showWarningMessage(`¿Borrar el chat "${s.name}"?`, { modal: true }, 'Borrar');
         if (pick !== 'Borrar') return;
-        if (esAgente) {
-          agentStore.delete(s.id);
-        } else if (s.filePath) {
-          try {
-            fs.rmSync(s.filePath);
-          } catch (e) {
-            void vscode.window.showErrorMessage(`KeyRotator: no se pudo borrar — ${(e as Error).message}`);
-            return;
-          }
-        }
+        agentStore.delete(s.id);
         sessionsProvider.refresh();
       }
     ),
