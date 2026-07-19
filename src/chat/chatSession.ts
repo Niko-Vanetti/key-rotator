@@ -37,7 +37,7 @@ export interface ActiveAccount {
    * OpenAI-compatible API account (OpenRouter, …): the turn is a streaming
    * `/chat/completions` call instead of the `claude` CLI.
    */
-  openai?: { apiKey: string; endpoint: string; model: string };
+  openai?: { apiKey: string; endpoint: string; model: string; provider: string };
 }
 
 /**
@@ -278,26 +278,50 @@ export class ChatSession {
     }
   }
 
-  /** Serve a turn from an OpenAI-compatible account (OpenRouter, …). */
+  /**
+   * Providers with a known hard per-account rpm cap get client-side throttled
+   * so a burst of turns waits for a slot instead of tripping a 429 at all.
+   * NVIDIA Build's free tier is 40 rpm; stay a few under it as margin.
+   */
+  private static readonly RPM_CAPS: Record<string, number> = { nvidia: 35 };
+
+  /** Serve a turn from an OpenAI-compatible account (OpenRouter, NVIDIA Build, …). */
   private async runOpenAITurn(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
-    const oai = account.openai!;
-    handlers.onModel(oai.model);
     this.oaiMessages.push({ role: 'user', content: text });
-    const res = await streamOpenAIChat({
-      endpoint: oai.endpoint,
-      apiKey: oai.apiKey,
-      model: oai.model,
-      messages: this.oaiMessages,
-      onDelta: (t) => handlers.onDelta(t),
-    });
-    if ('error' in res) {
-      // Keep the conversation consistent: drop the user turn we couldn't answer.
-      this.oaiMessages.pop();
-      handlers.onError(`Error de ${account.label}: ${res.error}`);
+    let current = account;
+    for (let attempt = 0; attempt <= MAX_FAILOVERS; attempt++) {
+      const oai = current.openai!;
+      handlers.onModel(oai.model);
+      const cap = ChatSession.RPM_CAPS[oai.provider];
+      const res = await streamOpenAIChat({
+        endpoint: oai.endpoint,
+        apiKey: oai.apiKey,
+        model: oai.model,
+        messages: this.oaiMessages,
+        onDelta: (t) => handlers.onDelta(t),
+        maxPerMinute: cap,
+        throttleKey: cap ? `${oai.provider}:${current.id}` : undefined,
+      });
+      if ('error' in res) {
+        if (res.rateLimited) {
+          const next = await this.backend.rotateFrom(current.id, `límite de ${oai.provider} (${res.error})`);
+          if (next?.openai) {
+            handlers.onAccountSwitch(next.label, `límite de ${oai.provider}`);
+            current = next;
+            continue;
+          }
+        }
+        // Keep the conversation consistent: drop the user turn we couldn't answer.
+        this.oaiMessages.pop();
+        handlers.onError(`Error de ${current.label}: ${res.error}`);
+        return;
+      }
+      this.oaiMessages.push({ role: 'assistant', content: res.text });
+      handlers.onDone(res.text);
       return;
     }
-    this.oaiMessages.push({ role: 'assistant', content: res.text });
-    handlers.onDone(res.text);
+    this.oaiMessages.pop();
+    handlers.onError('Demasiados cambios de cuenta seguidos. Detengo el intento para evitar un bucle.');
   }
 
   /** Serve a turn from a web-chat account via the browser daemon. */

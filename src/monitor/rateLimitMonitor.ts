@@ -21,6 +21,16 @@ export async function checkAccountHealth(account: Account): Promise<HealthStatus
   }
 }
 
+// Default base URL per OpenAI-compatible provider (mirrors OPENAI_ENDPOINTS in
+// extension.ts); `account.endpoint` overrides it for Ollama/custom setups.
+const OPENAI_COMPAT_DEFAULTS: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  'together-ai': 'https://api.together.xyz/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
+};
+
 function buildProbeRequest(account: Account): { url: string | null; headers: Record<string, string> } {
   switch (account.provider) {
     case 'anthropic':
@@ -33,8 +43,9 @@ function buildProbeRequest(account: Account): { url: string | null; headers: Rec
     case 'together-ai':
     case 'groq':
     case 'qwen':
+    case 'nvidia':
       return {
-        url: (account.endpoint ?? 'https://api.openai.com/v1') + '/models',
+        url: (account.endpoint ?? OPENAI_COMPAT_DEFAULTS[account.provider] ?? 'https://api.openai.com/v1') + '/models',
         headers: { Authorization: `Bearer ${account.apiKey}` },
       };
     case 'google-gemini':

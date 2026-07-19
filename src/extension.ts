@@ -281,11 +281,17 @@ export function activate(context: vscode.ExtensionContext) {
     openai: 'https://api.openai.com/v1',
     groq: 'https://api.groq.com/openai/v1',
     'together-ai': 'https://api.together.xyz/v1',
+    nvidia: 'https://integrate.api.nvidia.com/v1',
   };
   const isOpenAIProvider = (provider: string): boolean => provider in OPENAI_ENDPOINTS;
+  const OPENAI_DISPLAY_NAMES: Record<string, string> = {
+    openrouter: 'OpenRouter',
+    nvidia: 'NVIDIA Build',
+  };
   const openAIEndpoint = (meta: AccountMeta): string =>
     (meta.endpoint && meta.endpoint.trim()) || OPENAI_ENDPOINTS[meta.provider] || OPENAI_ENDPOINTS.openrouter;
   const DEFAULT_OPENROUTER_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+  const DEFAULT_NVIDIA_MODEL = 'z-ai/glm-5.2';
   const OAI_MODEL_KEY = 'keyRotator.openaiModelByAccount';
   const getOaiModelMap = (): Record<string, string> =>
     context.globalState.get<Record<string, string>>(OAI_MODEL_KEY, {});
@@ -295,10 +301,11 @@ export function activate(context: vscode.ExtensionContext) {
     void context.globalState.update(OAI_MODEL_KEY, m);
   };
   const openAIModel = (meta: AccountMeta): string => {
-    // Per-account choice (set from the chat dropdown) wins, then the global
-    // setting, then a sensible default.
+    // Per-account choice (set from the chat dropdown) wins, then a
+    // provider-specific default, then the global (OpenRouter-oriented) setting.
     const perAccount = getOaiModelMap()[meta.id];
     if (perAccount) return perAccount;
+    if (meta.provider === 'nvidia') return DEFAULT_NVIDIA_MODEL;
     const cfg = vscode.workspace.getConfiguration('keyRotator').get<string>('openRouterModel', '').trim();
     if (cfg) return cfg;
     return meta.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : 'gpt-4o-mini';
@@ -334,6 +341,37 @@ export function activate(context: vscode.ExtensionContext) {
       // network error — use fallback
     }
     return ORFALLBACK_MODELS;
+  }
+
+  // NVIDIA Build's catalog is huge (400+ models) and needs the account's own
+  // key to list (unlike OpenRouter's public endpoint) — cache per account.
+  const NVFALLBACK_MODELS = [
+    { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (z.ai)' },
+    { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra' },
+    { id: 'qwen/qwen3-coder-480b-a35b-instruct', label: 'Qwen3 Coder 480B' },
+    { id: 'deepseek-ai/deepseek-v4', label: 'DeepSeek V4' },
+  ];
+  const nvModelsCache = new Map<string, { at: number; models: { id: string; label: string }[] }>();
+  async function fetchNvidiaModels(meta: AccountMeta): Promise<{ id: string; label: string }[]> {
+    const cached = nvModelsCache.get(meta.id);
+    if (cached && Date.now() - cached.at < 30 * 60_000) return cached.models;
+    const key = await keyManager.getApiKey(meta.id);
+    if (!key) return NVFALLBACK_MODELS;
+    try {
+      const res = await fetch(openAIEndpoint(meta) + '/models', {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      const json = (await res.json()) as { data?: { id: string }[] };
+      const models = (json.data ?? []).map((m) => ({ id: m.id, label: m.id }));
+      if (models.length > 0) {
+        nvModelsCache.set(meta.id, { at: Date.now(), models });
+        return models;
+      }
+    } catch {
+      // network / auth error — use fallback
+    }
+    return NVFALLBACK_MODELS;
   }
 
   const getWebBrowserPref = (): string =>
@@ -521,7 +559,7 @@ export function activate(context: vscode.ExtensionContext) {
         return {
           id: pinned.id,
           label: pinned.label,
-          openai: { apiKey: key, endpoint: openAIEndpoint(pinned), model: openAIModel(pinned) },
+          openai: { apiKey: key, endpoint: openAIEndpoint(pinned), model: openAIModel(pinned), provider: pinned.provider },
         };
       }
     }
@@ -550,12 +588,31 @@ export function activate(context: vscode.ExtensionContext) {
 
   /** Mark `accountId` exhausted (with reason), rotate, return next account. */
   async function rotateChatFrom(accountId: string, reason?: string): Promise<ActiveAccount | null> {
+    const accounts = keyManager.getAllMeta();
+    const from = accounts.find((a) => a.id === accountId);
+
+    // OpenAI-compatible accounts (OpenRouter, NVIDIA Build, …) rotate among
+    // accounts of the SAME provider, independent of the Claude chatMode.
+    if (from && isOpenAIProvider(from.provider)) {
+      await keyManager.updateAccountMeta(accountId, {
+        status: /credit|saldo|billing|402|insufficient/i.test(reason ?? '') ? 'error' : 'rate-limited',
+        lastError: reason || 'límite de uso alcanzado',
+      });
+      const next = pickNextAccount(applyRateLimit(accounts, accountId), from.provider, accountId);
+      refreshUI();
+      if (!next) return null;
+      const key = await keyManager.getApiKey(next.id);
+      if (!key) return null;
+      return {
+        id: next.id,
+        label: next.label,
+        openai: { apiKey: key, endpoint: openAIEndpoint(next), model: openAIModel(next), provider: next.provider },
+      };
+    }
+
     const mode = getChatMode();
     // No cross-account rotation in full (single-login) mode.
     if (mode === 'full') return null;
-
-    const accounts = keyManager.getAllMeta();
-    const from = accounts.find((a) => a.id === accountId);
     // Credit/billing problems are persistent ('error', needs user action);
     // usage limits are temporary ('rate-limited', auto-recovers).
     const isCredit = /credit|saldo|billing|402|insufficient/i.test(reason ?? '');
@@ -744,7 +801,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       // OpenAI-compatible API accounts: label the bubble with the provider.
       if (isOpenAIProvider(meta.provider)) {
-        return meta.provider === 'openrouter' ? 'OpenRouter' : meta.provider;
+        return OPENAI_DISPLAY_NAMES[meta.provider] ?? meta.provider;
       }
       return null;
     },
@@ -756,11 +813,13 @@ export function activate(context: vscode.ExtensionContext) {
     getApiChatModels: (accountId: string) => {
       const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
+      if (meta.provider === 'nvidia') return nvModelsCache.get(meta.id)?.models ?? NVFALLBACK_MODELS;
       return orModelsCache?.models ?? ORFALLBACK_MODELS;
     },
     refreshApiChatModels: async (accountId: string) => {
       const meta = resolveMeta(accountId);
       if (!meta || !isOpenAIProvider(meta.provider)) return null;
+      if (meta.provider === 'nvidia') return fetchNvidiaModels(meta);
       return fetchOpenRouterModels();
     },
     setApiChatModel: (accountId: string, model: string) => {

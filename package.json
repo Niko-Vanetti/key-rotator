@@ -278,7 +278,7 @@
         "keyRotator.openRouterModel": {
           "type": "string",
           "default": "nvidia/nemotron-3-ultra-550b-a55b:free",
-          "description": "Modelo a usar con cuentas OpenRouter (u otra API estilo OpenAI) en el chat. Formato 'proveedor/modelo' (los terminados en ':free' no cuestan). Ej: 'nvidia/nemotron-3-ultra-550b-a55b:free'."
+          "description": "Modelo a usar con cuentas OpenRouter en el chat (no aplica a cuentas NVIDIA Build, que usan 'z-ai/glm-5.2' por defecto — cambia el modelo de cualquiera desde el selector del chat). Formato 'proveedor/modelo' (los terminados en ':free' no cuestan). Ej: 'nvidia/nemotron-3-ultra-550b-a55b:free'."
         },
         "keyRotator.webChatUseRealProfile": {
           "type": "boolean",

@@ -7,5 +7,6 @@
   { "prefix": "co_", "provider": "cohere", "displayName": "Cohere", "envVar": "COHERE_API_KEY", "docsUrl": "https://docs.cohere.com" },
   { "prefix": "together_", "provider": "together-ai", "displayName": "Together AI", "envVar": "TOGETHER_API_KEY", "docsUrl": "https://docs.together.ai" },
   { "prefix": "sk-or-", "provider": "openrouter", "displayName": "OpenRouter", "envVar": "OPENROUTER_API_KEY", "docsUrl": "https://openrouter.ai/docs" },
+  { "prefix": "nvapi-", "provider": "nvidia", "displayName": "NVIDIA Build", "envVar": "NVIDIA_API_KEY", "docsUrl": "https://build.nvidia.com/docs" },
   { "prefix": "sk-", "provider": "openai", "displayName": "OpenAI", "envVar": "OPENAI_API_KEY", "docsUrl": "https://platform.openai.com/docs" }
 ]

@@ -16,12 +16,24 @@ export interface OAIStreamOptions {
   messages: OAIMessage[];
   onDelta: (text: string) => void;
   signal?: AbortSignal;
+  /**
+   * Client-side throttle: if set, blocks the request (waiting, not failing)
+   * until it fits under this many requests/minute for `throttleKey`. Used to
+   * stay under providers with a hard per-account rpm cap (e.g. NVIDIA
+   * Build's free tier: 40 rpm) instead of relying on 429s + rotation alone.
+   */
+  maxPerMinute?: number;
+  throttleKey?: string;
 }
 
-/** Returns the full assistant text, or an error string. */
-export async function streamOpenAIChat(
-  opts: OAIStreamOptions
-): Promise<{ text: string } | { error: string }> {
+/** rateLimited: true means the caller should try the next account. */
+export type OAIStreamResult = { text: string } | { error: string; rateLimited?: boolean };
+
+/** Returns the full assistant text, or an error (flagged when it's a 429). */
+export async function streamOpenAIChat(opts: OAIStreamOptions): Promise<OAIStreamResult> {
+  if (opts.maxPerMinute && opts.throttleKey) {
+    await waitForSlot(opts.throttleKey, opts.maxPerMinute);
+  }
   const url = opts.endpoint.replace(/\/+$/, '') + '/chat/completions';
   let res: Response;
   try {
@@ -51,7 +63,7 @@ export async function streamOpenAIChat(
     } catch {
       /* keep raw */
     }
-    return { error: `HTTP ${res.status}: ${msg}` };
+    return { error: `HTTP ${res.status}: ${msg}`, rateLimited: res.status === 429 };
   }
 
   const reader = res.body?.getReader();
@@ -85,4 +97,21 @@ export async function streamOpenAIChat(
     }
   }
   return { text: full };
+}
+
+/** Sliding-window request timestamps, per throttle key (e.g. per provider). */
+const requestLog = new Map<string, number[]>();
+
+/** Waits until firing a request keeps `key` under `maxPerMinute` for the last 60s. */
+async function waitForSlot(key: string, maxPerMinute: number): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    const log = (requestLog.get(key) ?? []).filter((t) => now - t < 60_000);
+    if (log.length < maxPerMinute) {
+      log.push(now);
+      requestLog.set(key, log);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, log[0] + 60_000 - now + 50));
+  }
 }
