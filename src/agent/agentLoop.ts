@@ -14,9 +14,14 @@ export interface ToolCall {
   function: { name: string; arguments: string };
 }
 
+/** Vision: a user message can carry text + images (OpenAI content parts). */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | null;
+  content: string | ContentPart[] | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
@@ -107,6 +112,7 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
   const pieces: string[] = [];
 
   for (let step = 0; step < maxSteps; step++) {
+    if (opts.signal?.aborted) return { text: pieces.join('\n\n') };
     const res = await streamCall(opts);
     if ('error' in res) return res;
 
@@ -125,6 +131,12 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
       tool_calls: toolCalls,
     });
     for (const tc of toolCalls) {
+      // Stopped mid-turn: every tool_call still needs a tool result or the
+      // thread breaks on the next request.
+      if (opts.signal?.aborted) {
+        opts.messages.push({ role: 'tool', content: 'Cancelado por el usuario.', tool_call_id: tc.id });
+        continue;
+      }
       opts.onToolStart(tc.function.name, tc.function.arguments);
       const result = await opts.execute(tc.function.name, tc.function.arguments);
       opts.messages.push({ role: 'tool', content: result, tool_call_id: tc.id });

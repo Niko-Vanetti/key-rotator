@@ -51,6 +51,25 @@ export const AGENT_TOOLS = [
   tool('read_chat', 'Lee el transcript completo de una conversación pasada (por id devuelto por search_chats).', {
     id: { type: 'string', description: 'Id de la sesión (agent-…).' },
   }),
+  tool('web_search', 'Busca en internet y devuelve resultados con título, URL y extracto. Úsala para información actual o que no conoces.', {
+    query: { type: 'string', description: 'Consulta de búsqueda.' },
+  }),
+  tool('fetch_url', 'Abre una URL y devuelve su contenido como texto legible. Úsala tras web_search para leer una fuente a fondo.', {
+    url: { type: 'string', description: 'URL completa (http/https).' },
+  }),
+  tool('generate_image', 'Genera una imagen con IA a partir de un prompt y la guarda en la carpeta de trabajo (subcarpeta salidas/).', {
+    prompt: { type: 'string', description: 'Descripción detallada en inglés de la imagen a generar.' },
+    model: { type: 'string', description: 'Opcional: modelo de imagen de NVIDIA Build (default black-forest-labs/flux.1-dev).' },
+  }, ['prompt']),
+  tool(
+    'deep_research',
+    'Investigación profunda: busca en la web, lee varias fuentes y devuelve las notas con citas para que redactes un informe profesional. Úsala cuando pidan investigar, comparar o hacer un informe/reporte.',
+    {
+      topic: { type: 'string', description: 'Tema o pregunta a investigar.' },
+      depth: { type: 'string', description: 'Opcional: "rapida" (3 fuentes), "normal" (5, default) o "profunda" (8).' },
+    },
+    ['topic']
+  ),
 ];
 
 function tool(
@@ -75,15 +94,16 @@ function tool(
 
 const DENIED = 'DENEGADO por el usuario. No insistas con esta acción; pregúntale al usuario qué hacer.';
 
-/** Reads a skill's SKILL.md (or command .md) from the user's Claude library. */
-export function readSkill(name: string): string {
+/**
+ * Reads a skill's markdown from KeyRotator's own library (and, as a fallback,
+ * the user's Claude library). `roots` are skill directories, most specific first.
+ */
+export function readSkill(name: string, roots: string[] = [path.join(os.homedir(), '.claude', 'skills')]): string {
   const clean = name.replace(/^\//, '').trim();
   if (!clean || /[\\/]|\.\./.test(clean)) return `ERROR: nombre de skill inválido: "${name}"`;
-  const home = path.join(os.homedir(), '.claude');
-  for (const p of [
-    path.join(home, 'skills', clean, 'SKILL.md'),
-    path.join(home, 'commands', `${clean}.md`),
-  ]) {
+  const candidates = roots.flatMap((r) => [path.join(r, clean, 'SKILL.md'), path.join(r, `${clean}.md`)]);
+  candidates.push(path.join(os.homedir(), '.claude', 'commands', `${clean}.md`));
+  for (const p of candidates) {
     try {
       const content = fs.readFileSync(p, 'utf-8');
       return content.length > READ_CAP ? content.slice(0, READ_CAP) + '\n…[truncado]' : content;
@@ -92,6 +112,22 @@ export function readSkill(name: string): string {
     }
   }
   return `ERROR: no existe la skill "${clean}". Usa un nombre de la lista del prompt del sistema.`;
+}
+
+/** Skill names available in the given roots (dirs with SKILL.md, or *.md). */
+export function listSkillNames(roots: string[]): string[] {
+  const names = new Set<string>();
+  for (const root of roots) {
+    try {
+      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+        if (e.isDirectory() && fs.existsSync(path.join(root, e.name, 'SKILL.md'))) names.add(e.name);
+        else if (e.isFile() && e.name.endsWith('.md')) names.add(e.name.replace(/\.md$/, ''));
+      }
+    } catch {
+      // missing dir — skip
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 /** System prompt for the agent (initial working folder baked in). */
@@ -114,6 +150,10 @@ export function agentSystemPrompt(cwd: string, skillNames: string[] = []): strin
     'Entorno: Windows; run_command usa cmd.exe con tu carpeta de trabajo como cwd (timeout 60 s). Para cualquier lógica no trivial usa: powershell -Command "...". Verifica tus resultados (p.ej. lista o relee lo que creaste) antes de reportar éxito.',
     '',
     'MEMORIA: tienes acceso a TODAS las conversaciones pasadas de KeyRotator. Si el usuario dice "recuerdas…" o alude a un chat anterior, usa search_chats(query) y luego read_chat(id) — no digas que no recuerdas sin buscar primero.',
+    '',
+    'WEB E INVESTIGACIÓN: web_search(query) para buscar y fetch_url(url) para leer una página completa. Úsalas SIEMPRE que te pregunten por algo actual, específico o que no domines — no inventes. Para informes/comparativas/investigaciones usa deep_research(topic, depth) y redacta el informe profesional citando [1],[2]… Si piden el informe en archivo, guárdalo (write_file .md, o .docx por PowerShell).',
+    '',
+    'IMÁGENES: si el usuario adjunta una imagen la ves directamente (descríbela/analízala sin excusas). Para CREAR imágenes usa generate_image(prompt, model) — el prompt en inglés y detallado; se guarda en salidas/ dentro de tu carpeta.',
     ...(skillNames.length
       ? [
           '',

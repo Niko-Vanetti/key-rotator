@@ -22,6 +22,7 @@ import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunne
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
 import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
 import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
+import { listSkillNames } from './agent/tools.js';
 import { parseSnippet, snippetHasData } from './core/snippetParser.js';
 
 const HISTORY_KEY = 'keyRotator.history';
@@ -75,27 +76,42 @@ export function activate(context: vscode.ExtensionContext) {
   // el agente genere (scripts, temporales, resultados) vive aquí.
   const agentDefaultCwd = () => path.join(os.homedir(), 'Documents', 'KeyRotator');
 
-  // --- MCP: vínculo con los servidores MCP del usuario ----------------------
-  // Lee la MISMA config que Claude Code (~/.claude.json → mcpServers), más un
-  // override opcional (keyRotator.chatMcpConfig). Los servidores gestionados
-  // por claude.ai (Canva/Gmail/Drive) son OAuth y NO se pueden lanzar aquí;
-  // solo los "spawneables" (command+args) del config funcionan.
+  // --- MCP y Skills PROPIOS de KeyRotator -----------------------------------
+  // Config propia (herramienta independiente), editable desde el dashboard;
+  // los botones "Sincronizar con Claude" copian desde ~/.claude.json y
+  // ~/.claude/skills. Los MCP gestionados por claude.ai (Canva/Gmail/Drive)
+  // son OAuth y NO se pueden lanzar aquí: solo servidores con command+args.
+  const krConfigDir = path.join(os.homedir(), 'Documents', 'KeyRotator Config');
+  const krMcpFile = path.join(krConfigDir, 'mcp.json');
+  const krSkillsDir = path.join(krConfigDir, 'skills');
+  const claudeSkillsDir = path.join(os.homedir(), '.claude', 'skills');
+  const ensureConfigDirs = () => {
+    fs.mkdirSync(krSkillsDir, { recursive: true });
+    if (!fs.existsSync(krMcpFile)) fs.writeFileSync(krMcpFile, JSON.stringify({ mcpServers: {} }, null, 2), 'utf-8');
+  };
+  const readKrMcp = (): Record<string, McpServerConfig> => {
+    try {
+      const j = JSON.parse(fs.readFileSync(krMcpFile, 'utf-8')) as { mcpServers?: Record<string, McpServerConfig> };
+      return j.mcpServers ?? {};
+    } catch {
+      return {};
+    }
+  };
+  const writeKrMcp = (servers: Record<string, McpServerConfig>) => {
+    ensureConfigDirs();
+    fs.writeFileSync(krMcpFile, JSON.stringify({ mcpServers: servers }, null, 2), 'utf-8');
+    mcpConnections.forEach((c) => c.dispose());
+    mcpConnections.clear(); // reconecta con la config nueva
+  };
+
   const mcpConnections = new Map<string, McpConnection>();
   const loadMcpServers = (): Record<string, McpServerConfig> => {
-    const servers: Record<string, McpServerConfig> = {};
-    const merge = (raw: unknown) => {
-      const m = (raw as { mcpServers?: Record<string, McpServerConfig> })?.mcpServers;
-      if (m) for (const [name, cfg] of Object.entries(m)) if (cfg?.command) servers[name] = cfg;
-    };
-    try {
-      merge(JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf-8')));
-    } catch {
-      /* no global claude config */
-    }
+    const servers = readKrMcp();
     const override = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMcpConfig', '').trim();
     if (override) {
       try {
-        merge(JSON.parse(fs.readFileSync(override, 'utf-8')));
+        const j = JSON.parse(fs.readFileSync(override, 'utf-8')) as { mcpServers?: Record<string, McpServerConfig> };
+        for (const [name, cfg] of Object.entries(j.mcpServers ?? {})) if (cfg?.command) servers[name] = cfg;
       } catch {
         /* bad path — ignore */
       }
@@ -327,6 +343,112 @@ export function activate(context: vscode.ExtensionContext) {
     generateId: () => randomUUID(),
     // Un pegado → cuenta lista (mismo motor que el comando 'Pegar código').
     addFromSnippet: (text: string, label?: string) => addAccountFromText(text, label),
+
+    // ----- MCP (config propia de KeyRotator) -----
+    listMcp: () =>
+      Object.entries(readKrMcp()).map(([name, cfg]) => ({
+        name,
+        detail: [cfg.command, ...(cfg.args ?? [])].join(' ').slice(0, 120),
+      })),
+    addMcp: async (text: string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return 'la configuración pegada no es JSON válido.';
+      }
+      const obj = parsed as Record<string, unknown> & { mcpServers?: Record<string, McpServerConfig> };
+      const incoming = (obj.mcpServers ?? obj) as Record<string, McpServerConfig>;
+      const servers = readKrMcp();
+      let added = 0;
+      for (const [name, cfg] of Object.entries(incoming)) {
+        if (cfg && typeof cfg === 'object' && typeof (cfg as McpServerConfig).command === 'string') {
+          servers[name] = cfg as McpServerConfig;
+          added++;
+        }
+      }
+      if (added === 0) return 'no encontré ningún servidor con "command". Revisa el formato.';
+      writeKrMcp(servers);
+      return null;
+    },
+    deleteMcp: async (name: string) => {
+      const servers = readKrMcp();
+      delete servers[name];
+      writeKrMcp(servers);
+    },
+    editMcp: async () => {
+      ensureConfigDirs();
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(krMcpFile));
+    },
+    syncMcpFromClaude: async () => {
+      let claude: Record<string, McpServerConfig> = {};
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf-8')) as {
+          mcpServers?: Record<string, McpServerConfig>;
+        };
+        claude = j.mcpServers ?? {};
+      } catch {
+        return 'no pude leer ~/.claude.json (¿existe?).';
+      }
+      const servers = readKrMcp();
+      let n = 0;
+      for (const [name, cfg] of Object.entries(claude)) {
+        if (cfg?.command) {
+          servers[name] = cfg;
+          n++;
+        }
+      }
+      writeKrMcp(servers);
+      return n
+        ? `${n} servidor(es) MCP importados de Claude. (Las integraciones OAuth de claude.ai — Canva, Gmail, Drive — no son importables.)`
+        : 'Claude no tiene servidores MCP locales que importar (los de claude.ai son OAuth y no se pueden vincular).';
+    },
+
+    // ----- Skills (biblioteca propia de KeyRotator) -----
+    listSkills: () =>
+      listSkillNames([krSkillsDir]).map((name) => ({ name, detail: 'use_skill("' + name + '")' })),
+    addSkill: async (name: string, text: string) => {
+      const clean = name.trim().replace(/[^\w.-]+/g, '-');
+      if (!clean) return 'nombre de skill inválido.';
+      ensureConfigDirs();
+      fs.mkdirSync(path.join(krSkillsDir, clean), { recursive: true });
+      fs.writeFileSync(path.join(krSkillsDir, clean, 'SKILL.md'), text, 'utf-8');
+      return null;
+    },
+    deleteSkill: async (name: string) => {
+      const clean = name.replace(/[\\/]|\.\./g, '');
+      try {
+        fs.rmSync(path.join(krSkillsDir, clean), { recursive: true, force: true });
+        fs.rmSync(path.join(krSkillsDir, `${clean}.md`), { force: true });
+      } catch {
+        // already gone
+      }
+    },
+    editSkill: async (name: string) => {
+      const clean = name.replace(/[\\/]|\.\./g, '');
+      for (const p of [path.join(krSkillsDir, clean, 'SKILL.md'), path.join(krSkillsDir, `${clean}.md`)]) {
+        if (fs.existsSync(p)) {
+          await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(p));
+          return;
+        }
+      }
+    },
+    syncSkillsFromClaude: async () => {
+      ensureConfigDirs();
+      const names = listSkillNames([claudeSkillsDir]);
+      if (names.length === 0) return 'no encontré skills en ~/.claude/skills.';
+      let n = 0;
+      for (const name of names) {
+        const src = path.join(claudeSkillsDir, name);
+        try {
+          fs.cpSync(src, path.join(krSkillsDir, name), { recursive: true });
+          n++;
+        } catch {
+          // skip unreadable skill
+        }
+      }
+      return `${n} skill(s) copiadas desde Claude a la biblioteca de KeyRotator.`;
+    },
   };
 
   // --- chat backend ------------------------------------------------------
@@ -1024,7 +1146,12 @@ export function activate(context: vscode.ExtensionContext) {
         return 'deny' as const; // Cancelar / cerrar el diálogo = denegar
       },
       store: agentStore,
-      skillNames: () => listSlashCommands(),
+      // Biblioteca propia primero; si está vacía, las skills de Claude.
+      skillNames: () => {
+        const own = listSkillNames([krSkillsDir]);
+        return own.length ? own : listSkillNames([claudeSkillsDir]);
+      },
+      skillRoots: () => [krSkillsDir, claudeSkillsDir],
       mcpTools: () => getAgentMcpTools(),
     }),
   };

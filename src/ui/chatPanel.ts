@@ -281,6 +281,9 @@ export class ChatPanel {
       case 'setWebToggle':
         if (msg.id) this.session.setWebToggle(msg.id, !!msg.on);
         break;
+      case 'stop':
+        this.session.stop();
+        break;
       case 'addAccount':
         await vscode.commands.executeCommand('keyRotator.addAccount');
         break;
@@ -291,19 +294,27 @@ export class ChatPanel {
         await vscode.commands.executeCommand('keyRotator.openDashboard');
         break;
 
-      // ----- attach a file (the "+" menu) -----
-      case 'attachFile': {
-        const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Adjuntar' });
+      // ----- attach a file / image (the "+" menu) -----
+      case 'attachFile':
+      case 'attachImage': {
+        const isImage = msg.type === 'attachImage';
+        const picked = await vscode.window.showOpenDialog({
+          canSelectMany: true,
+          openLabel: 'Adjuntar',
+          filters: isImage ? { Imágenes: ['png', 'jpg', 'jpeg', 'webp', 'gif'] } : undefined,
+        });
         if (!picked || picked.length === 0) break;
         const isWeb = this.backend.getWebCapsFor?.(this.accountId ?? '') != null;
-        if (isWeb) {
-          // Web chat (DeepSeek, …): upload the file into the web chat on send.
+        const isAgent = this.backend.getApiChatModel?.(this.accountId ?? '') != null;
+        if (isWeb || isAgent) {
+          // Web chat uploads the file; the agent gets it as an attachment
+          // (images travel as vision parts, other files as paths to read).
           for (const u of picked) {
             this.pendingWebFiles.push(u.fsPath);
             this.post({ type: 'webAttach', name: u.fsPath.split(/[\\/]/).pop(), path: u.fsPath });
           }
         } else {
-          // Claude (agent): reference the path with @ so the agent reads it.
+          // Claude CLI: reference the path with @ so it reads the file.
           this.post({ type: 'insert', text: picked.map((u) => `@${u.fsPath} `).join('') });
         }
         break;

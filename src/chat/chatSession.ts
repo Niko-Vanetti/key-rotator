@@ -10,8 +10,9 @@ import {
 import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
 import type { WebChatRunner, WebCaps } from './webChatRunner.js';
 import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
-import { runAgentTurn } from '../agent/agentLoop.js';
+import { runAgentTurn, type ContentPart } from '../agent/agentLoop.js';
 import { AGENT_TOOLS, executeTool, agentSystemPrompt, readSkill } from '../agent/tools.js';
+import { webSearch, fetchUrl, generateImage, deepResearch, imageToDataUrl, isImageFile } from '../agent/aiTools.js';
 import { PermissionGate, type PermAnswer, type PermCategory } from '../agent/permissions.js';
 import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore } from '../agent/agentStore.js';
 
@@ -121,8 +122,10 @@ export interface AgentBackendContext {
   promptPermission(message: string, category: PermCategory): Promise<PermAnswer | undefined>;
   /** The agent's own session store (separate from the Claude store). */
   store: AgentStore;
-  /** Names of the user's skills (from ~/.claude/skills + commands), for the prompt. */
+  /** Names of the available skills, for the system prompt. */
   skillNames(): string[];
+  /** Directories to resolve a skill's markdown from (most specific first). */
+  skillRoots(): string[];
   /** The user's linked MCP tools (from ~/.claude.json / config), namespaced. */
   mcpTools(): Promise<AgentMcpTool[]>;
 }
@@ -167,6 +170,8 @@ export class ChatSession {
   private agentSession: AgentSession | null = null;
   /** Permission grants ("allow all") live per conversation. */
   private agentGate: PermissionGate | null = null;
+  /** Aborts the in-flight turn (the chat's "Detener" button). */
+  private abort: AbortController | null = null;
 
   constructor(private backend: ChatBackend) {}
 
@@ -216,6 +221,11 @@ export class ChatSession {
     return this.busy;
   }
 
+  /** Stop the in-flight turn (button "Detener"). Tools already run stay done. */
+  stop(): void {
+    this.abort?.abort();
+  }
+
   /** Reset so the next message starts a brand-new claude session. */
   reset(): void {
     this.sessionId = null;
@@ -251,6 +261,7 @@ export class ChatSession {
       return;
     }
     this.busy = true;
+    this.abort = new AbortController();
     try {
       let account = await this.backend.resolveActiveAccount(this.accountOverride);
       if (!account) {
@@ -267,7 +278,7 @@ export class ChatSession {
 
       // NVIDIA Build / OpenRouter → the file/command AGENT loop (tools).
       if (account.openai && AGENT_PROVIDERS.has(account.openai.provider)) {
-        await this.runAgentTurnFor(text, account, handlers);
+        await this.runAgentTurnFor(text, account, handlers, attachments);
         return;
       }
 
@@ -334,6 +345,7 @@ export class ChatSession {
       handlers.onError('Demasiados cambios de cuenta seguidos. Detengo el intento para evitar un bucle.');
     } finally {
       this.busy = false;
+      this.abort = null;
     }
   }
 
@@ -345,7 +357,12 @@ export class ChatSession {
   private static readonly RPM_CAPS: Record<string, number> = { nvidia: 35 };
 
   /** Serve a turn of the file/command agent (NVIDIA Build / OpenRouter). */
-  private async runAgentTurnFor(text: string, account: ActiveAccount, handlers: TurnHandlers): Promise<void> {
+  private async runAgentTurnFor(
+    text: string,
+    account: ActiveAccount,
+    handlers: TurnHandlers,
+    attachments?: string[]
+  ): Promise<void> {
     const ctx = this.backend.getAgentContext?.();
     if (!ctx) {
       handlers.onError('El agente no está disponible en este entorno.');
@@ -370,7 +387,21 @@ export class ChatSession {
     if (s.messages.length === 0) {
       s.messages.push({ role: 'system', content: agentSystemPrompt(s.cwd, ctx.skillNames()) });
     }
-    s.messages.push({ role: 'user', content: text });
+    // Visión: las imágenes adjuntas viajan como partes image_url (data URL);
+    // los demás adjuntos se mencionan por ruta para que el agente los lea.
+    const images = (attachments ?? []).filter(isImageFile);
+    const others = (attachments ?? []).filter((a) => !isImageFile(a));
+    const userText = others.length ? `${text}\n\nArchivos adjuntos: ${others.join(', ')}` : text;
+    if (images.length > 0) {
+      const parts: ContentPart[] = [{ type: 'text', text: userText }];
+      for (const img of images) {
+        const url = imageToDataUrl(img);
+        if (url) parts.push({ type: 'image_url', image_url: { url } });
+      }
+      s.messages.push({ role: 'user', content: parts });
+    } else {
+      s.messages.push({ role: 'user', content: userText });
+    }
     handlers.onModel(oai.model);
 
     // The user's linked MCP tools (namespaced mcp__server__tool) join the
@@ -403,10 +434,30 @@ export class ChatSession {
       }
       if (name === 'use_skill') {
         try {
-          return readSkill(String(JSON.parse(args || '{}').name ?? ''));
+          return readSkill(String(JSON.parse(args || '{}').name ?? ''), ctx.skillRoots());
         } catch {
           return 'ERROR: nombre de skill inválido.';
         }
+      }
+      // Web / imagen / investigación: sin permiso para leer (como Claude),
+      // la generación de imagen escribe en la carpeta de trabajo.
+      if (name === 'web_search' || name === 'fetch_url' || name === 'generate_image' || name === 'deep_research') {
+        let a: Record<string, unknown> = {};
+        try {
+          a = JSON.parse(args || '{}');
+        } catch {
+          return 'ERROR: argumentos inválidos.';
+        }
+        const aiCtx = {
+          getCwd: () => s.cwd,
+          apiKey: oai.apiKey,
+          endpoint: oai.endpoint,
+          provider: oai.provider,
+        };
+        if (name === 'web_search') return webSearch(String(a.query ?? ''));
+        if (name === 'fetch_url') return fetchUrl(String(a.url ?? ''));
+        if (name === 'deep_research') return deepResearch(String(a.topic ?? ''), a.depth ? String(a.depth) : undefined);
+        return generateImage(aiCtx, String(a.prompt ?? ''), a.model ? String(a.model) : undefined);
       }
       const mcp = mcpByName.get(name);
       if (mcp) {
@@ -431,6 +482,7 @@ export class ChatSession {
       maxPerMinute: cap,
       throttleKey: cap ? `${oai.provider}:${account.id}` : undefined,
       params: oai.params,
+      signal: this.abort?.signal,
     });
 
     // Persist whatever really happened (tools already ran even on error).
@@ -440,6 +492,12 @@ export class ChatSession {
       // best-effort: a failed save must not eat the reply
     }
     if ('error' in res) {
+      // "Detener" aborta el fetch → no es un fallo que reportar como error.
+      if (this.abort?.signal.aborted || /abort/i.test(res.error)) {
+        handlers.onInfo('⏹ Detenido por ti.');
+        handlers.onDone('');
+        return;
+      }
       handlers.onError(`Error de ${account.label}: ${res.error}`);
       return;
     }
@@ -467,6 +525,7 @@ export class ChatSession {
         maxPerMinute: cap,
         throttleKey: cap ? `${oai.provider}:${current.id}` : undefined,
         params: oai.params,
+        signal: this.abort?.signal,
       });
       if ('error' in res) {
         if (res.rateLimited) {

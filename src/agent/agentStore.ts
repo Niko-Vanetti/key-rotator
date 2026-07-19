@@ -44,11 +44,23 @@ export function newAgentSession(accountId: string, provider: string, model: stri
   };
 }
 
+/** Plain text of a message, flattening vision content parts (pure, tested). */
+export function messageText(content: AgentMessage['content']): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (p.type === 'text' ? p.text : '[imagen]'))
+      .join(' ')
+      .trim();
+  }
+  return '';
+}
+
 /** Derive the sidebar title from the first user message (pure, tested). */
 export function sessionTitle(session: Pick<AgentSession, 'title' | 'messages'>): string {
   if (session.title) return session.title;
-  const first = session.messages.find((m) => m.role === 'user')?.content ?? '';
-  const t = (first || '').replace(/\s+/g, ' ').trim();
+  const first = messageText(session.messages.find((m) => m.role === 'user')?.content ?? '');
+  const t = first.replace(/\s+/g, ' ').trim();
   return t ? (t.length > 60 ? t.slice(0, 57) + '…' : t) : 'Conversación del agente';
 }
 
@@ -132,11 +144,13 @@ export class AgentStore {
       if (!full) continue;
       const snippets: string[] = [];
       for (const m of full.messages) {
-        if ((m.role !== 'user' && m.role !== 'assistant') || !m.content) continue;
-        const idx = m.content.toLowerCase().indexOf(q);
+        if (m.role !== 'user' && m.role !== 'assistant') continue;
+        const body = messageText(m.content);
+        if (!body) continue;
+        const idx = body.toLowerCase().indexOf(q);
         if (idx === -1) continue;
         const from = Math.max(0, idx - 80);
-        snippets.push(`  [${m.role}] …${m.content.slice(from, idx + q.length + 120).replace(/\s+/g, ' ')}…`);
+        snippets.push(`  [${m.role}] …${body.slice(from, idx + q.length + 120).replace(/\s+/g, ' ')}…`);
         if (snippets.length >= 3) break;
       }
       if (snippets.length) {
@@ -154,8 +168,10 @@ export class AgentStore {
     const s = this.load(id);
     if (!s) return `ERROR: no existe el chat "${id}".`;
     const lines = s.messages
-      .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
-      .map((m) => `[${m.role === 'user' ? 'USUARIO' : 'ASISTENTE'}] ${m.content}`);
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({ role: m.role, body: messageText(m.content) }))
+      .filter((m) => m.body)
+      .map((m) => `[${m.role === 'user' ? 'USUARIO' : 'ASISTENTE'}] ${m.body}`);
     const text = `Chat "${sessionTitle(s)}" (${new Date(s.updatedAt).toLocaleString()}):\n\n${lines.join('\n\n')}`;
     return text.length > 40_000 ? text.slice(-40_000) : text; // keep the tail (most recent)
   }

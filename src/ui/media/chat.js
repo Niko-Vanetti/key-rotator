@@ -138,7 +138,17 @@
     clearWelcome(); const el = document.createElement('div'); el.className = 'notice ' + kind; el.textContent = text;
     messagesEl.appendChild(el); scrollToBottom();
   }
-  function setSending(s) { sending = s; sendBtn.disabled = s; inputEl.disabled = s; if (!s) inputEl.focus(); }
+  // Mientras responde, el botón pasa a "Detener"; el input NUNCA se bloquea
+  // (lo que escribas se encola).
+  function setSending(s) {
+    sending = s;
+    sendBtn.textContent = s ? 'Detener' : 'Enviar';
+    sendBtn.classList.toggle('stopping', s);
+    sendBtn.title = s ? 'Detener la respuesta' : 'Enviar';
+    sendBtn.disabled = false;
+    inputEl.disabled = false;
+    if (!s) inputEl.focus();
+  }
   function finalizeStreaming() {
     if (streamingEl) {
       streamingEl.parentElement.classList.remove('streaming');
@@ -234,8 +244,38 @@
   function clearAttachChips() { attachBar.innerHTML = ''; attachBar.classList.add('hidden'); }
 
   // ---------- chat ----------
+  // Mensajes escritos mientras el agente responde: se encolan y salen solos
+  // cuando termina el turno (se muestran atenuados con "en cola").
+  const queue = [];
+  function renderQueue() {
+    let bar = $('queueBar');
+    if (!bar) return;
+    bar.innerHTML = '';
+    bar.classList.toggle('hidden', queue.length === 0);
+    queue.forEach((q, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'queue-chip';
+      chip.innerHTML = '<span>🕐 en cola: ' + q.replace(/</g, '&lt;').slice(0, 80) + '</span>';
+      const x = document.createElement('button');
+      x.textContent = '✕'; x.title = 'Quitar de la cola';
+      x.addEventListener('click', () => { queue.splice(i, 1); renderQueue(); });
+      chip.appendChild(x);
+      bar.appendChild(chip);
+    });
+  }
+  function flushQueue() {
+    if (sending || queue.length === 0) return;
+    const next = queue.shift();
+    renderQueue();
+    dispatch(next);
+  }
+  function dispatch(text) {
+    setSending(true); streamingRaw = '';
+    streamingEl = addMessage('assistant', '', false);
+    streamingEl.parentElement.classList.add('streaming');
+    vscode.postMessage({ type: 'send', text });
+  }
   function send() {
-    if (sending) return;
     const text = inputEl.value.trim();
     if (!text) return;
     const atts = [...attachBar.querySelectorAll('.attach-chip span')].map((s) => s.textContent);
@@ -243,10 +283,11 @@
     addMessage('user', label, false);
     inputEl.value = ''; autoGrow(); slashMenu.classList.add('hidden');
     clearAttachChips();
-    setSending(true); streamingRaw = '';
-    streamingEl = addMessage('assistant', '', false);
-    streamingEl.parentElement.classList.add('streaming');
-    vscode.postMessage({ type: 'send', text });
+    if (sending) { queue.push(text); renderQueue(); return; }
+    dispatch(text);
+  }
+  function stop() {
+    vscode.postMessage({ type: 'stop' });
   }
 
   // ---------- events ----------
@@ -258,7 +299,7 @@
     if (slashOpen && e.key === 'Escape') { slashMenu.classList.add('hidden'); slashSel = -1; return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
-  sendBtn.addEventListener('click', send);
+  sendBtn.addEventListener('click', () => (sending ? stop() : send()));
   modelSelect.addEventListener('change', () => vscode.postMessage({ type: 'setModel', value: modelSelect.value }));
   effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));
   webModelSelect.addEventListener('change', () => {
@@ -366,8 +407,9 @@
         if (streamingEl) { streamingEl.parentElement.remove(); streamingEl = null; streamingRaw = ''; }
         addNotice('error', '⚠ ' + msg.text);
         setSending(false);
+        flushQueue();
         break;
-      case 'done': finalizeStreaming(); setSending(false); break;
+      case 'done': finalizeStreaming(); setSending(false); flushQueue(); break;
     }
   });
 

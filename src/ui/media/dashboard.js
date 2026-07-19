@@ -113,6 +113,52 @@ function renderStats(stats, accounts, history) {
   stableContainer.innerHTML = `<div>${best.label} (${best.provider}) — ${awayCounts[best.id]} rate limit(s) reportado(s)</div>`;
 }
 
+// ---------- MCP + Skills ----------
+function renderList(containerId, items, kind) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  box.innerHTML = '';
+  if (!items || items.length === 0) {
+    box.innerHTML = '<div class="empty">Nada configurado todavía.</div>';
+    return;
+  }
+  for (const it of items) {
+    const card = document.createElement('div');
+    card.className = 'account-card';
+    card.innerHTML =
+      '<div class="meta"><span class="label">' + it.name + '</span>' +
+      (it.detail ? '<span class="sub">' + it.detail + '</span>' : '') + '</div>' +
+      '<div class="actions">' +
+      '<button data-act="edit">Ver / editar</button>' +
+      '<button data-act="del">Eliminar</button></div>';
+    card.querySelector('[data-act="edit"]').addEventListener('click', () =>
+      vscode.postMessage({ type: kind === 'mcp' ? 'editMcp' : 'editSkill', name: it.name })
+    );
+    card.querySelector('[data-act="del"]').addEventListener('click', () =>
+      vscode.postMessage({ type: kind === 'mcp' ? 'deleteMcp' : 'deleteSkill', name: it.name })
+    );
+    box.appendChild(card);
+  }
+}
+
+const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+on('syncMcpBtn', () => vscode.postMessage({ type: 'syncMcp' }));
+on('syncSkillsBtn', () => vscode.postMessage({ type: 'syncSkills' }));
+on('addMcpBtn', () => {
+  const text = document.getElementById('mcpBox').value.trim();
+  if (!text) { vscode.postMessage({ type: 'error', message: 'Pega la configuración del servidor MCP.' }); return; }
+  vscode.postMessage({ type: 'addMcp', text });
+  document.getElementById('mcpBox').value = '';
+});
+on('addSkillBtn', () => {
+  const name = document.getElementById('skillName').value.trim();
+  const text = document.getElementById('skillBox').value.trim();
+  if (!name || !text) { vscode.postMessage({ type: 'error', message: 'Escribe el nombre y el contenido de la skill.' }); return; }
+  vscode.postMessage({ type: 'addSkill', name, text });
+  document.getElementById('skillName').value = '';
+  document.getElementById('skillBox').value = '';
+});
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   switch (msg.type) {
@@ -120,6 +166,12 @@ window.addEventListener('message', (event) => {
       renderAccounts(msg.accounts);
       renderHistory(msg.history);
       renderStats(msg.stats, msg.accounts, msg.history);
+      break;
+    case 'mcpState':
+      renderList('mcpList', msg.servers, 'mcp');
+      break;
+    case 'skillState':
+      renderList('skillList', msg.skills, 'skill');
       break;
   }
 });

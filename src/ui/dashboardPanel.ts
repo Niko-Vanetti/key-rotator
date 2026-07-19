@@ -17,6 +17,18 @@ export interface DashboardCallbacks {
   generateId(): string;
   /** One-paste setup: sample code (or bare key) → configured account. */
   addFromSnippet(text: string, label?: string): Promise<{ ok: boolean; summary?: string }>;
+  /** MCP servers available to the agent. */
+  listMcp(): { name: string; detail: string }[];
+  addMcp(text: string): Promise<string | null>; // returns an error message, or null
+  deleteMcp(name: string): Promise<void>;
+  editMcp(name: string): Promise<void>;
+  syncMcpFromClaude(): Promise<string>;
+  /** Skills the agent can load with use_skill. */
+  listSkills(): { name: string; detail: string }[];
+  addSkill(name: string, text: string): Promise<string | null>;
+  deleteSkill(name: string): Promise<void>;
+  editSkill(name: string): Promise<void>;
+  syncSkillsFromClaude(): Promise<string>;
 }
 
 interface IncomingMessage {
@@ -26,6 +38,7 @@ interface IncomingMessage {
   message?: string;
   text?: string;
   label?: string;
+  name?: string;
   account?: {
     label: string;
     apiKey: string;
@@ -71,6 +84,8 @@ export class DashboardPanel {
 
   private postState(): void {
     this.panel.webview.postMessage({ type: 'state', ...this.callbacks.getState() });
+    this.panel.webview.postMessage({ type: 'mcpState', servers: this.callbacks.listMcp() });
+    this.panel.webview.postMessage({ type: 'skillState', skills: this.callbacks.listSkills() });
   }
 
   private async handleMessage(msg: IncomingMessage): Promise<void> {
@@ -119,6 +134,49 @@ export class DashboardPanel {
         if (!msg.apiKey) return;
         const result = await this.callbacks.detectProvider(msg.apiKey);
         this.panel.webview.postMessage({ type: 'detection', result });
+        break;
+      }
+      // ----- MCP -----
+      case 'addMcp': {
+        if (!msg.text) return;
+        const err = await this.callbacks.addMcp(msg.text);
+        if (err) vscode.window.showErrorMessage(`KeyRotator: ${err}`);
+        this.postState();
+        break;
+      }
+      case 'deleteMcp':
+        if (msg.name) await this.callbacks.deleteMcp(msg.name);
+        this.postState();
+        break;
+      case 'editMcp':
+        if (msg.name) await this.callbacks.editMcp(msg.name);
+        this.postState();
+        break;
+      case 'syncMcp': {
+        const summary = await this.callbacks.syncMcpFromClaude();
+        vscode.window.showInformationMessage(`KeyRotator: ${summary}`);
+        this.postState();
+        break;
+      }
+      // ----- Skills -----
+      case 'addSkill': {
+        if (!msg.name || !msg.text) return;
+        const err = await this.callbacks.addSkill(msg.name, msg.text);
+        if (err) vscode.window.showErrorMessage(`KeyRotator: ${err}`);
+        this.postState();
+        break;
+      }
+      case 'deleteSkill':
+        if (msg.name) await this.callbacks.deleteSkill(msg.name);
+        this.postState();
+        break;
+      case 'editSkill':
+        if (msg.name) await this.callbacks.editSkill(msg.name);
+        break;
+      case 'syncSkills': {
+        const summary = await this.callbacks.syncSkillsFromClaude();
+        vscode.window.showInformationMessage(`KeyRotator: ${summary}`);
+        this.postState();
         break;
       }
       case 'error':

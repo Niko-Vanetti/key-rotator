@@ -317,7 +317,7 @@
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts test/snippetParser.test.ts test/mcp.test.ts"
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts test/snippetParser.test.ts test/mcp.test.ts test/aiTools.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -8,7 +8,9 @@
 </head>
 <body>
   <div class="tabs">
-    <button class="tab active" data-tab="keys">Keys</button>
+    <button class="tab active" data-tab="keys">Modelos</button>
+    <button class="tab" data-tab="mcp">MCP</button>
+    <button class="tab" data-tab="skills">Skills</button>
     <button class="tab" data-tab="history">Historial</button>
     <button class="tab" data-tab="stats">Estadísticas</button>
   </div>
@@ -22,6 +24,32 @@
       <button id="addBtn" class="full">Agregar cuenta</button>
     </div>
     <div id="accountList"></div>
+  </section>
+
+  <section id="mcp" class="panel">
+    <div class="section-head">
+      <p class="hint">Servidores MCP que puede usar el agente. Cada llamada pide tu aprobación.</p>
+      <button id="syncMcpBtn">⇄ Sincronizar con los MCP de Claude</button>
+    </div>
+    <div class="add-form">
+      <textarea id="mcpBox" class="full" rows="5"
+        placeholder='Pega la config de un servidor MCP, p.ej.:&#10;{ "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] } }&#10;o el bloque completo { "mcpServers": { … } }'></textarea>
+      <button id="addMcpBtn" class="full">Agregar / actualizar MCP</button>
+    </div>
+    <div id="mcpList"></div>
+  </section>
+
+  <section id="skills" class="panel">
+    <div class="section-head">
+      <p class="hint">Skills disponibles para el agente (use_skill). Se leen de tu biblioteca.</p>
+      <button id="syncSkillsBtn">⇄ Sincronizar con las Skills de Claude</button>
+    </div>
+    <div class="add-form">
+      <input id="skillName" class="full" placeholder="Nombre de la skill nueva (ej: mi-metodologia)" />
+      <textarea id="skillBox" class="full" rows="5" placeholder="Contenido de la skill (Markdown con las instrucciones)"></textarea>
+      <button id="addSkillBtn" class="full">Crear / actualizar skill</button>
+    </div>
+    <div id="skillList"></div>
   </section>
 
   <section id="history" class="panel">

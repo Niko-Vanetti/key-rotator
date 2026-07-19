@@ -87,6 +87,17 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vsco
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+.section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.section-head .hint { opacity: 0.75; font-size: 12px; margin: 0; }
+.section-head button {
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #fff);
+  border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.section-head button:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
 .add-form textarea {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
