@@ -139,6 +139,31 @@ test('routeToMember picks the owner from the router reply', () => {
   assert.equal(routeToMember('google/gemma-4-31b-it', TEAM, 'x')?.role, 'Frontend');
 });
 
+test('un mismo modelo puede ocupar varios puestos (backend + frontend)', () => {
+  const plan = normalizePlan(
+    {
+      assignments: [
+        { model: 'glm', role: 'Backend', scope: 'API y base de datos', task: 'haz la API' },
+        { model: 'glm', role: 'Frontend', scope: 'interfaz y estilos CSS', task: 'haz la UI' },
+        { model: 'gemma', role: 'Seguridad', scope: 'auditoría', task: 'audita' },
+      ],
+    },
+    ROSTER
+  )!;
+  assert.equal(plan.assignments.length, 3);
+  const team = teamFromPlan(plan);
+  assert.equal(team.filter((t) => t.model === 'z-ai/glm-5.2').length, 2);
+  // Cada puesto se enruta por separado aunque compartan modelo.
+  assert.equal(routeToMember('Backend', team, 'la API falla')?.role, 'Backend');
+  assert.equal(routeToMember('Frontend', team, 'los estilos fallan')?.role, 'Frontend');
+  assert.equal(routeToMember('', team, 'los estilos CSS se ven rotos')?.role, 'Frontend');
+  // Si el router nombra el MODELO (ambiguo), desempata con el área del mensaje.
+  assert.equal(routeToMember('z-ai/glm-5.2', team, 'la base de datos no conecta')?.role, 'Backend');
+  assert.equal(routeToMember('z-ai/glm-5.2', team, 'la interfaz está rota')?.role, 'Frontend');
+  // Ambiguo y sin pistas → nadie (lo atiende el director) en vez de adivinar mal.
+  assert.equal(routeToMember('z-ai/glm-5.2', team, 'revisa eso'), null);
+});
+
 test('routeToMember falls back to the scope words of the user message', () => {
   // El router no dijo nada útil, pero el usuario habla de su área.
   assert.equal(routeToMember('no sé', TEAM, 'la autenticación no funciona')?.role, 'Backend');

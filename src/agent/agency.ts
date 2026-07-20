@@ -216,12 +216,15 @@ export function routeToMember(reply: string, team: AgencyTeamMember[], userText:
   const said = reply.toLowerCase();
   const byRole = team.find((t) => said.includes(t.role.toLowerCase()));
   if (byRole) return byRole;
-  const byModel = team.find((t) => said.includes(t.model.toLowerCase()));
-  if (byModel) return byModel;
+  // Un mismo modelo puede ocupar VARIOS puestos: si el router contestó con el
+  // modelo, hay que desempatar por el área a la que se refiere el usuario.
+  const byModel = team.filter((t) => said.includes(t.model.toLowerCase()));
+  if (byModel.length === 1) return byModel[0];
+  const candidates = byModel.length > 1 ? byModel : team;
   // Fallback: score the user's own words against each scope.
   const text = userText.toLowerCase();
   let best: { m: AgencyTeamMember; score: number } | null = null;
-  for (const t of team) {
+  for (const t of candidates) {
     const words = `${t.scope} ${t.role}`.toLowerCase().split(/[^\wáéíóúñ]+/).filter((w) => w.length > 3);
     const score = words.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0);
     if (score > 0 && (!best || score > best.score)) best = { m: t, score };
@@ -313,6 +316,7 @@ export function directorResearchPrompt(task: string, roster: AgencyModel[], toda
     '}',
     '',
     'Reglas: máximo 4 asignaciones, todas ejecutables EN PARALELO (sin depender entre sí); cada "task" es autosuficiente porque el trabajador no ve esta conversación; si la tarea es simple y tú puedes hacerla, asígnate a ti mismo una sola vez; "skills", "mcp" y "recommendations" pueden ir vacíos.',
+    'UN MISMO MODELO PUEDE OCUPAR VARIOS PUESTOS: si la evidencia dice que el mismo modelo es el mejor en dos disciplinas (p.ej. backend y frontend), repítelo en ambas asignaciones con roles y "scope" distintos. No repartas entre modelos peores solo por "dar trabajo a todos" — manda la evidencia, no el reparto equitativo.',
   ].join('\n');
 }
 
