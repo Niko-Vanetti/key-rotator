@@ -18,9 +18,14 @@ import {
   extractJson,
   normalizePlan,
   resolveNames,
+  teamFromPlan,
+  routeToMember,
+  routerPrompt,
+  specialistPrompt,
   directorResearchPrompt,
   directorSynthesisPrompt,
   type AgencyModel,
+  type AgencyTeamMember,
 } from '../agent/agency.js';
 import { PermissionGate, type PermAnswer, type PermCategory } from '../agent/permissions.js';
 import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore } from '../agent/agentStore.js';
@@ -410,7 +415,7 @@ export class ChatSession {
 
     const director = pickDirector(roster)!;
     handlers.onModel(`agencia · director ${director.model}`);
-    handlers.onInfo(`🏢 Modo agencia — director: ${director.model} · equipo: ${roster.length} modelo(s)`);
+    handlers.onInfo(`🏢 Modo agencia — director: ${director.model} · modelos disponibles: ${roster.length}`);
 
     // Un solo modelo: no hay nada que repartir, trabaja directo.
     const runOne = (m: AgencyModel, prompt: string, sys: string) =>
@@ -433,8 +438,15 @@ export class ChatSession {
         maxSteps: 15,
       });
 
-    // 1) INVESTIGAR + PLANIFICAR (el director usa la web de verdad y valida
-    //    qué tan reciente es cada evidencia antes de repartir).
+    // Si el equipo YA existe, este mensaje va al responsable del área: sale
+    // él, se presenta, diagnostica y corrige. Sin rehacer la investigación.
+    if (s.team && s.team.length > 0) {
+      await this.runSpecialistTurn(text, s, gate, roster, director, handlers, ctx, runOne);
+      return;
+    }
+
+    // 1) INVESTIGAR + FORMAR EL EQUIPO (el director usa la web de verdad y
+    //    valida modelo por modelo, con la fecha de cada evidencia).
     handlers.onInfo('🔎 Etapa 1 — investigando qué modelo rinde mejor en cada parte (con evidencia reciente)…');
     const today = new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' });
     const planRes = await runOne(
@@ -459,8 +471,12 @@ export class ChatSession {
       return;
     }
     if (plan.strategy) handlers.onInfo(`🧭 Estrategia: ${plan.strategy}`);
+    // El equipo queda FIJO para esta conversación: cada quien con su área.
+    s.team = teamFromPlan(plan);
     handlers.onInfo(
-      `👥 Equipo asignado:\n${plan.assignments.map((a) => `   • ${a.role} → ${a.model}`).join('\n')}`
+      `👥 Equipo de la agencia (permanente en este chat):\n${s.team
+        .map((t) => `   • ${t.role} → ${t.model}\n     responsable de: ${t.scope}${t.evidence ? `\n     porque: ${t.evidence}` : ''}`)
+        .join('\n')}`
     );
 
     // 2) PREPARAR EL ENTORNO: cargar las skills que el director pidió y avisar
@@ -504,6 +520,9 @@ export class ChatSession {
         const r = await runOne(m, a.task, workerSys(a.role));
         const output = 'error' in r ? `(falló: ${r.error})` : r.text;
         handlers.onInfo(`   ✅ ${a.role} (${a.model}) entregó ${output.length} caracteres`);
+        // Cada miembro recuerda lo que entregó: así puede responder por su área.
+        const member = s.team?.find((t) => t.role === a.role);
+        if (member && !output.startsWith('(falló:')) member.lastWork = output.slice(0, 8000);
         return { role: a.role, model: a.model, output };
       })
     );
@@ -546,6 +565,116 @@ export class ChatSession {
     }
     if ('error' in finalRes) {
       handlers.onError(`El director falló al integrar: ${finalRes.error}`);
+      return;
+    }
+    handlers.onDone(finalText);
+  }
+
+  /**
+   * Seguimiento con el equipo ya formado: el director decide de quién es el
+   * asunto, y ESE especialista sale a hablar en primera persona, diagnostica
+   * y corrige su parte. Si el asunto es de todos, responde el director.
+   */
+  private async runSpecialistTurn(
+    text: string,
+    s: AgentSession,
+    gate: PermissionGate,
+    roster: AgencyModel[],
+    director: AgencyModel,
+    handlers: TurnHandlers,
+    ctx: AgentBackendContext,
+    runOne: (m: AgencyModel, prompt: string, sys: string) => Promise<{ text: string } | { error: string }>
+  ): Promise<void> {
+    const team = s.team!;
+    handlers.onInfo(`🏢 Equipo activo: ${team.map((t) => `${t.role} (${t.model})`).join(' · ')}`);
+
+    // 1) ¿De quién es esto? (llamada corta al director; si falla, heurística)
+    let owner: AgencyTeamMember | null = null;
+    const routed = await runOne(
+      director,
+      routerPrompt(text, team),
+      'Eres el director de la agencia. Respondes SOLO con el nombre del rol responsable, o TODOS.'
+    );
+    const reply = 'error' in routed ? '' : routed.text;
+    if (!/todos/i.test(reply)) owner = routeToMember(reply, team, text);
+
+    // 2) Habla el responsable (o el director si es transversal).
+    const base = agentSystemPrompt(s.cwd, ctx.skillNames());
+    if (!owner) {
+      handlers.onInfo('🧭 Asunto general: responde el director.');
+      const m = director;
+      const res = await runAgentTurn({
+        endpoint: m.endpoint,
+        apiKey: m.apiKey,
+        model: m.model,
+        messages: [
+          {
+            role: 'system',
+            content: `${base}\n\nEres el DIRECTOR de la agencia. Tu equipo: ${team
+              .map((t) => `${t.role} (${t.model}) → ${t.scope}`)
+              .join('; ')}. Atiende el mensaje del usuario tú mismo, o coordina lo necesario. Habla en primera persona como director.`,
+          },
+          { role: 'user', content: text },
+        ],
+        tools: this.agencyTools(),
+        execute: (n, a) => this.agencyExecute(n, a, s, gate, m, ctx),
+        onDelta: (t) => handlers.onDelta(t),
+        onToolStart: (n) => handlers.onInfo(`🔧 director: ${n}`),
+        maxPerMinute: ChatSession.RPM_CAPS[m.provider],
+        throttleKey: ChatSession.RPM_CAPS[m.provider] ? `${m.provider}:${m.accountId}` : undefined,
+        params: m.params,
+        signal: this.abort?.signal,
+      });
+      this.finishAgencyTurn(s, ctx, res, handlers, 'director');
+      return;
+    }
+
+    const model = roster.find((r) => r.model === owner!.model) ?? director;
+    handlers.onModel(`${owner.role} · ${owner.model}`);
+    handlers.onInfo(`🙋 Sale el responsable: ${owner.role} (${owner.model}) — a cargo de ${owner.scope}`);
+    const res = await runAgentTurn({
+      endpoint: model.endpoint,
+      apiKey: model.apiKey,
+      model: model.model,
+      messages: [
+        { role: 'system', content: specialistPrompt(owner, base) },
+        { role: 'user', content: text },
+      ],
+      tools: this.agencyTools(),
+      execute: (n, a) => this.agencyExecute(n, a, s, gate, model, ctx),
+      onDelta: (t) => handlers.onDelta(t),
+      onToolStart: (n) => handlers.onInfo(`   🔧 ${owner!.role}: ${n}`),
+      maxPerMinute: ChatSession.RPM_CAPS[model.provider],
+      throttleKey: ChatSession.RPM_CAPS[model.provider] ? `${model.provider}:${model.accountId}` : undefined,
+      params: model.params,
+      signal: this.abort?.signal,
+    });
+    if (!('error' in res) && res.text) owner.lastWork = res.text.slice(0, 8000);
+    this.finishAgencyTurn(s, ctx, res, handlers, owner.role);
+  }
+
+  /** Persist + report the end of an agency turn. */
+  private finishAgencyTurn(
+    s: AgentSession,
+    ctx: AgentBackendContext,
+    res: { text: string } | { error: string },
+    handlers: TurnHandlers,
+    who: string
+  ): void {
+    const finalText = 'error' in res ? '' : res.text;
+    if (finalText) s.messages.push({ role: 'assistant', content: finalText });
+    try {
+      ctx.store.save(s);
+    } catch {
+      // best-effort
+    }
+    if ('error' in res) {
+      if (this.abort?.signal.aborted) {
+        handlers.onInfo('⏹ Detenido por ti.');
+        handlers.onDone('');
+        return;
+      }
+      handlers.onError(`${who} falló: ${res.error}`);
       return;
     }
     handlers.onDone(finalText);

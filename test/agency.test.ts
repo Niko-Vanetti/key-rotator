@@ -6,6 +6,10 @@ import {
   normalizePlan,
   matchModel,
   resolveNames,
+  teamFromPlan,
+  routeToMember,
+  routerPrompt,
+  specialistPrompt,
   directorResearchPrompt,
   type AgencyModel,
 } from '../src/agent/agency.js';
@@ -97,6 +101,58 @@ test('the research prompt carries the date, the roster and the recency rule', ()
   assert.match(p, /google\/gemma-4-31b-it/);
   assert.match(p, /VALIDA LA FECHA/);
   assert.match(p, /recency="mes"/);
+});
+
+test('teamFromPlan builds the permanent roster with scope and evidence', () => {
+  const plan = normalizePlan(
+    {
+      assignments: [
+        { model: 'glm', role: 'Backend', scope: 'API y base de datos', evidence: 'benchmark de junio 2026', task: 'haz la API' },
+        { model: 'gemma', role: 'Frontend', task: 'haz la UI' }, // sin scope → cae al rol
+      ],
+    },
+    ROSTER
+  )!;
+  const team = teamFromPlan(plan);
+  assert.equal(team.length, 2);
+  assert.equal(team[0].scope, 'API y base de datos');
+  assert.equal(team[0].evidence, 'benchmark de junio 2026');
+  assert.equal(team[1].scope, 'Frontend');
+});
+
+const TEAM = [
+  { role: 'Backend', model: 'z-ai/glm-5.2', scope: 'API, base de datos y autenticación' },
+  { role: 'Frontend', model: 'google/gemma-4-31b-it', scope: 'interfaz, estilos CSS y componentes' },
+];
+
+test('routeToMember picks the owner from the router reply', () => {
+  assert.equal(routeToMember('Backend', TEAM, 'lo que sea')?.role, 'Backend');
+  assert.equal(routeToMember('creo que es el Frontend', TEAM, 'x')?.role, 'Frontend');
+  assert.equal(routeToMember('google/gemma-4-31b-it', TEAM, 'x')?.role, 'Frontend');
+});
+
+test('routeToMember falls back to the scope words of the user message', () => {
+  // El router no dijo nada útil, pero el usuario habla de su área.
+  assert.equal(routeToMember('no sé', TEAM, 'la autenticación no funciona')?.role, 'Backend');
+  assert.equal(routeToMember('', TEAM, 'los estilos se ven rotos')?.role, 'Frontend');
+  assert.equal(routeToMember('', TEAM, 'hola qué tal'), null); // nadie claro → director
+  assert.equal(routeToMember('Backend', [], 'x'), null);
+});
+
+test('specialistPrompt makes the owner introduce itself, diagnose and fix', () => {
+  const p = specialistPrompt({ ...TEAM[0], lastWork: 'entregué el endpoint /login' }, 'BASE');
+  assert.match(p, /BASE/);
+  assert.match(p, /eres el Backend/);
+  assert.match(p, /API, base de datos y autenticación/);
+  assert.match(p, /entregué el endpoint \/login/);
+  assert.match(p, /primera persona/);
+  assert.match(p, /CORRÍGELO/);
+});
+
+test('routerPrompt lists every member with its scope', () => {
+  const p = routerPrompt('el login falla', TEAM);
+  assert.match(p, /Backend \(z-ai\/glm-5\.2\) → responsable de: API/);
+  assert.match(p, /TODOS/);
 });
 
 test('recencyParam maps the windows for the search engine', () => {

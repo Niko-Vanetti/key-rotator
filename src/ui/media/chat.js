@@ -436,7 +436,18 @@
         if (msg.assistantName) assistantName = msg.assistantName;
         break;
       case 'title': chatTitleEl.textContent = msg.title || 'Nueva conversación'; break;
-      case 'model': if (msg.model) activeModelEl.textContent = msg.model; break;
+      case 'model':
+        if (msg.model) {
+          activeModelEl.textContent = msg.model;
+          // En modo agencia el "modelo" es quién habla (rol · modelo): que la
+          // burbuja lleve ese nombre y no el del modelo del panel.
+          assistantName = msg.model;
+          if (streamingEl) {
+            const who = streamingEl.parentElement.querySelector('.who');
+            if (who) who.textContent = msg.model;
+          }
+        }
+        break;
       case 'usage': {
         // Show when the usage limit resets (from claude's rate_limit_event).
         const usageBadge = document.getElementById('usageBadge');

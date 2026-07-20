@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage } from './agentLoop.js';
+import type { AgencyTeamMember } from './agency.js';
 
 /**
  * The agent's OWN session store: one JSON file per conversation under
@@ -20,6 +21,11 @@ export interface AgentSession {
   createdAt: number;
   updatedAt: number;
   messages: AgentMessage[];
+  /**
+   * Agency mode: the permanent team for this conversation. Each member owns an
+   * area, so later complaints about it route back to the same specialist.
+   */
+  team?: AgencyTeamMember[];
 }
 
 export interface AgentSessionSummary {

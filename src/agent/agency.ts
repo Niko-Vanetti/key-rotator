@@ -23,6 +23,89 @@ export interface AgencyAssignment {
   role: string;
   /** The self-contained instruction for that worker. */
   task: string;
+  /**
+   * What this member OWNS from now on (files, modules, areas). The team is
+   * persistent: later complaints about this area come back to this member.
+   */
+  scope?: string;
+  /** Why this model was chosen, with the date of the evidence. */
+  evidence?: string;
+}
+
+/** A permanent member of the agency for this conversation. */
+export interface AgencyTeamMember {
+  role: string;
+  model: string;
+  /** Area this member is responsible for ("backend y API", "estilos CSS"…). */
+  scope: string;
+  /** Why they were picked (evidence + date), shown when they introduce themselves. */
+  evidence?: string;
+  /** Summary of what they delivered last, so they can answer about it. */
+  lastWork?: string;
+}
+
+/** Builds the persistent team from a validated plan (pure, tested). */
+export function teamFromPlan(plan: AgencyPlan): AgencyTeamMember[] {
+  return plan.assignments.map((a) => ({
+    role: a.role,
+    model: a.model,
+    scope: a.scope?.trim() || a.role,
+    evidence: a.evidence,
+  }));
+}
+
+/**
+ * Picks which team member owns a follow-up message. Matches the router's
+ * answer, then falls back to scoring the text against each member's scope
+ * words. Returns null when nobody clearly owns it (→ director handles it).
+ * Pure — unit-tested.
+ */
+export function routeToMember(reply: string, team: AgencyTeamMember[], userText: string): AgencyTeamMember | null {
+  if (team.length === 0) return null;
+  const said = reply.toLowerCase();
+  const byRole = team.find((t) => said.includes(t.role.toLowerCase()));
+  if (byRole) return byRole;
+  const byModel = team.find((t) => said.includes(t.model.toLowerCase()));
+  if (byModel) return byModel;
+  // Fallback: score the user's own words against each scope.
+  const text = userText.toLowerCase();
+  let best: { m: AgencyTeamMember; score: number } | null = null;
+  for (const t of team) {
+    const words = `${t.scope} ${t.role}`.toLowerCase().split(/[^\wáéíóúñ]+/).filter((w) => w.length > 3);
+    const score = words.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0);
+    if (score > 0 && (!best || score > best.score)) best = { m: t, score };
+  }
+  return best?.m ?? null;
+}
+
+/** Asks the director which member owns a follow-up (short, cheap call). */
+export function routerPrompt(userText: string, team: AgencyTeamMember[]): string {
+  return [
+    'Eres el director de una agencia de IA. Estos son tus especialistas y de qué es responsable cada uno:',
+    ...team.map((t) => `- ${t.role} (${t.model}) → responsable de: ${t.scope}`),
+    '',
+    `MENSAJE DEL USUARIO:\n${userText}`,
+    '',
+    'Responde SOLO con el nombre del rol responsable de atender ese mensaje (tal cual aparece arriba). Si el mensaje toca a varios o es general, responde exactamente: TODOS.',
+  ].join('\n');
+}
+
+/**
+ * System prompt for a specialist answering about their own area — they
+ * introduce themselves, diagnose honestly and fix it.
+ */
+export function specialistPrompt(member: AgencyTeamMember, base: string): string {
+  return [
+    base,
+    '',
+    `IDENTIDAD: eres el ${member.role} de esta agencia (modelo ${member.model}). Eres el RESPONSABLE de: ${member.scope}.`,
+    member.lastWork ? `\nLO QUE ENTREGASTE ANTES:\n${member.lastWork.slice(0, 6000)}` : '',
+    '',
+    'El usuario te está hablando A TI sobre tu área. Responde en primera persona empezando por presentarte en una línea (ej. "Soy el encargado del backend").',
+    'Si algo no funciona: (1) INVESTIGA de verdad la causa con tus herramientas — lee los archivos, ejecuta el código, reproduce el fallo; (2) di con claridad POR QUÉ falló, sin excusas ni suposiciones; (3) CORRÍGELO tú mismo y verifica que ya funciona; (4) reporta qué cambiaste. Nunca pidas permiso para investigar ni ofrezcas opciones: hazlo.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export interface AgencyPlan {
@@ -54,17 +137,24 @@ export function directorResearchPrompt(task: string, roster: AgencyModel[], toda
     '',
     `TAREA DEL USUARIO:\n${task}`,
     '',
-    'ETAPA 1 — INVESTIGACIÓN (obligatoria, no la saltes):',
+    'ETAPA 1 — INVESTIGACIÓN Y FORMACIÓN DEL EQUIPO (obligatoria, no la saltes):',
     '1. Determina qué DISCIPLINAS necesita realmente esta tarea (ej. para un programa: frontend, backend, seguridad, pruebas; para un documento: redacción, diseño/scripts de maquetado). Tú decides cuáles, según la tarea.',
-    '2. Investiga con web_search/deep_research (recency="mes", si no hay nada amplía a "año") cuál de los modelos de la lista rinde mejor en cada disciplina. Busca por el NOMBRE de cada modelo + la disciplina, y benchmarks recientes.',
-    '3. VALIDA LA FECHA de cada afirmación (fetch_url para confirmar). Un ranking viejo NO vale: los modelos envejecen rápido. Si solo encuentras información antigua sobre un modelo, dilo y no lo trates como "el mejor".',
-    '4. Si detectas que existe un modelo MEJOR que el usuario NO tiene (disponible en build.nvidia.com), anótalo como recomendación con su razón — NO lo asignes.',
-    '5. Decide si hacen falta SKILLS (metodologías) o servidores MCP para hacer bien el trabajo.',
+    '2. INVESTIGA CADA MODELO DE LA LISTA, uno por uno, con web_search/deep_research (recency="mes"; si no sale nada amplía a "año"): busca "<nombre exacto del modelo>" + la disciplina, más benchmarks y fecha de lanzamiento. Necesitas saber en qué es fuerte CADA UNO antes de repartir; no asignes de memoria ni por el nombre.',
+    '3. VALIDA LA FECHA de cada afirmación (abre la fuente con fetch_url). Un ranking viejo NO vale: los modelos envejecen rápido. Si de un modelo solo hay información antigua, dilo y no lo trates como "el mejor" — considera que puede estar obsoleto.',
+    '4. ASIGNA cada disciplina al modelo que la evidencia respalde, y define el ÁREA DE LA QUE QUEDA RESPONSABLE de forma permanente (archivos, módulos o partes concretas). Ese responsable atenderá después cualquier problema de su área.',
+    '5. Si detectas que existe un modelo MEJOR que el usuario NO tiene (disponible en build.nvidia.com), anótalo como recomendación con su razón y la fecha — NO lo asignes.',
+    '6. Decide si hacen falta SKILLS (metodologías) o servidores MCP para hacer bien el trabajo.',
     '',
     'Cuando termines de investigar, responde SOLO con este JSON (sin texto alrededor):',
     '{',
-    '  "strategy": "2-3 frases: qué disciplinas identificaste y por qué asignaste cada modelo, citando la fecha de la evidencia",',
-    '  "assignments": [{"model":"<id exacto de la lista>","role":"<disciplina>","task":"<instrucción completa y autosuficiente>"}],',
+    '  "strategy": "2-3 frases: qué disciplinas identificaste y por qué cada modelo, citando la fecha de la evidencia",',
+    '  "assignments": [{',
+    '     "model":"<id exacto de la lista>",',
+    '     "role":"<disciplina, ej. Backend>",',
+    '     "scope":"<de qué queda responsable de forma permanente, concreto>",',
+    '     "evidence":"<en qué te basas y de qué fecha es>",',
+    '     "task":"<instrucción completa y autosuficiente para su parte ahora>"',
+    '  }],',
     '  "skills": ["<nombre de skill que conviene cargar>"],',
     '  "mcp": ["<servidor MCP útil>"],',
     '  "recommendations": [{"model":"<modelo que el usuario NO tiene>","reason":"<por qué sería mejor para qué parte, con la fecha de la evidencia>"}]',
@@ -169,10 +259,13 @@ export function normalizePlan(raw: unknown, roster: AgencyModel[], maxWorkers = 
     const wanted = typeof a?.model === 'string' ? a.model.trim() : '';
     const match = matchModel(wanted, roster);
     if (!match) continue;
+    const extra = item as { scope?: unknown; evidence?: unknown };
     assignments.push({
       model: match.model,
       role: typeof a?.role === 'string' && a.role.trim() ? a.role.trim() : 'Especialista',
       task,
+      scope: typeof extra?.scope === 'string' ? extra.scope.trim() : undefined,
+      evidence: typeof extra?.evidence === 'string' ? extra.evidence.trim() : undefined,
     });
     if (assignments.length >= maxWorkers) break;
   }
