@@ -17,7 +17,13 @@ export interface AiToolContext {
   provider: string;
 }
 
-const FETCH_CAP = 60_000;
+/**
+ * Cuánto texto de una página se le pasa al modelo. 60k caracteres (~20k
+ * tokens) hacían que un modelo mediano tardara MINUTOS en el prefill sin
+ * emitir nada: la web ya se había leído en 0,3 s, lo lento era digerirla.
+ * 12k cubre el contenido útil de casi cualquier artículo.
+ */
+const FETCH_CAP = 12_000;
 
 /** Strip HTML to readable text (pure, tested). */
 export function htmlToText(html: string): string {
@@ -84,7 +90,13 @@ export async function fetchUrl(url: string): Promise<string> {
     const type = res.headers.get('content-type') ?? '';
     const body = await res.text();
     const text = /json|text\/plain/.test(type) ? body : htmlToText(body);
-    return text.length > FETCH_CAP ? text.slice(0, FETCH_CAP) + '\n…[truncado]' : text || '(sin contenido de texto)';
+    if (text.length > FETCH_CAP) {
+      return (
+        text.slice(0, FETCH_CAP) +
+        `\n\n…[recortado: la página tiene ${text.length} caracteres y solo se te enviaron los primeros ${FETCH_CAP}. Si lo que buscabas puede estar más abajo, dilo o busca una fuente más específica.]`
+      );
+    }
+    return text || '(sin contenido de texto)';
   } catch (e) {
     return `ERROR al abrir ${url}: ${(e as Error).message}`;
   }

@@ -530,6 +530,15 @@ export class ChatSession {
           handlers.onStatus?.(`${who}: ${info}`);
           handlers.onInfo(`   ⏳ ${who}: ${info}`);
         },
+        onReasoning: (chars) => {
+          const now = Date.now();
+          if (now - this.lastStatusAt > 400) {
+            this.lastStatusAt = now;
+            handlers.onStatus?.(`${who} está razonando… (${chars.toLocaleString('es-DO')} caracteres)`);
+          }
+        },
+        onToolDone: (n, chars) =>
+          handlers.onStatus?.(`${who} procesa lo que devolvió ${n} (${chars.toLocaleString('es-DO')} caracteres)`),
         maxPerMinute: ChatSession.RPM_CAPS[m.provider],
         throttleKey: ChatSession.RPM_CAPS[m.provider] ? `${m.provider}:${m.accountId}` : undefined,
         params: m.params,
@@ -1144,6 +1153,10 @@ export class ChatSession {
           handlers.onStatus?.(`${oai.model} está razonando… (${chars.toLocaleString('es-DO')} caracteres)`);
         }
       },
+      onToolDone: (name, chars) =>
+        handlers.onStatus?.(
+          `${oai.model} está procesando lo que devolvió ${name} (${chars.toLocaleString('es-DO')} caracteres)`
+        ),
       maxPerMinute: cap,
       throttleKey: cap ? `${oai.provider}:${account.id}` : undefined,
       params: oai.params,

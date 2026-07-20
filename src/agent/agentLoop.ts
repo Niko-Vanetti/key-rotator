@@ -127,6 +127,8 @@ export interface AgentTurnOpts {
   onRetry?(info: string): void;
   /** Fired while the model emits reasoning (chars so far) — keeps the UI alive. */
   onReasoning?(chars: number): void;
+  /** Fired when a tool finished and the model starts digesting its output. */
+  onToolDone?(name: string, chars: number): void;
   maxPerMinute?: number;
   throttleKey?: string;
   maxSteps?: number;
@@ -185,6 +187,9 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
       opts.onToolStart(tc.function.name, tc.function.arguments);
       const result = await opts.execute(tc.function.name, tc.function.arguments);
       opts.messages.push({ role: 'tool', content: result, tool_call_id: tc.id });
+      // La herramienta ya terminó; lo que viene ahora (a veces minutos) es el
+      // modelo digiriendo el resultado. Decirlo evita el "parece congelado".
+      opts.onToolDone?.(tc.function.name, result.length);
     }
   }
   return {

@@ -94,3 +94,21 @@ test('closestModels sugiere los ids parecidos al que falló', async () => {
   assert.ok(!near.includes('google/gemma-4-31b-it'), 'no debe sugerir familias ajenas');
   assert.deepEqual(closestModels('zzz/inexistente', disponibles), []);
 });
+
+test('fetchUrl recorta las páginas enormes y avisa del recorte', async () => {
+  const { fetchUrl } = await import('../src/agent/aiTools.js');
+  const realFetch = globalThis.fetch;
+  // Página gigante como utaite.wiki: 72k de texto tras limpiar el HTML.
+  const huge = '<p>' + 'contenido '.repeat(9000) + '</p>';
+  globalThis.fetch = (async () =>
+    new Response(huge, { status: 200, headers: { 'Content-Type': 'text/html' } })) as typeof fetch;
+  try {
+    const out = await fetchUrl('https://ejemplo.test/pagina');
+    // Antes se enviaban 60.000 caracteres → minutos de prefill del modelo.
+    assert.ok(out.length < 13_000, 'debe recortarse a ~12k, midió ' + out.length);
+    assert.match(out, /recortado/);
+    assert.match(out, /solo se te enviaron los primeros/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
