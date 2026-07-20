@@ -367,6 +367,16 @@
   });
   sendBtn.addEventListener('click', () => (sending ? stop() : send()));
 
+  // Investigación profunda: interruptor explícito. Apagado = responde directo.
+  const researchBtn = $('researchBtn');
+  if (researchBtn) {
+    researchBtn.addEventListener('click', () => {
+      const on = !researchBtn.classList.contains('on');
+      researchBtn.classList.toggle('on', on);
+      vscode.postMessage({ type: 'setResearch', on });
+    });
+  }
+
   // ---------- arrastrar y soltar archivos sobre el chat ----------
   // VS Code entrega rutas por 'text/uri-list' (explorador u SO); File.path es
   // el respaldo. El host convierte las URIs a rutas reales y las adjunta.

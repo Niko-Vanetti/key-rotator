@@ -9,6 +9,7 @@ interface IncomingMessage {
   value?: string;
   on?: boolean;
   paths?: string[];
+  research?: boolean;
 }
 
 /**
@@ -288,6 +289,15 @@ export class ChatPanel {
         break;
       case 'stop':
         this.session.stop();
+        break;
+      case 'setResearch':
+        this.session.setResearch(!!msg.on);
+        this.post({
+          type: 'info',
+          text: msg.on
+            ? '🔬 Investigación profunda ACTIVADA: buscará en la web y contrastará fuentes antes de responder.'
+            : '🔬 Investigación profunda desactivada: responderá directo (solo buscará si le pides algo que lo exija).',
+        });
         break;
       case 'setMode': {
         const mode = msg.value === 'agency' ? 'agency' : 'individual';

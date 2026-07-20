@@ -97,6 +97,15 @@ function tool(
 const DENIED = 'DENEGADO por el usuario. No insistas con esta acción; pregúntale al usuario qué hacer.';
 
 /**
+ * Tools for a turn. Without the deep-research switch the heavy research tool
+ * is REMOVED (not just discouraged): models were calling it for a plain "hola".
+ */
+export function toolsFor(research: boolean): unknown[] {
+  if (research) return AGENT_TOOLS;
+  return AGENT_TOOLS.filter((t) => (t as { function: { name: string } }).function.name !== 'deep_research');
+}
+
+/**
  * Reads a skill's markdown from KeyRotator's own library (and, as a fallback,
  * the user's Claude library). `roots` are skill directories, most specific first.
  */
@@ -133,7 +142,7 @@ export function listSkillNames(roots: string[]): string[] {
 }
 
 /** System prompt for the agent (initial working folder baked in). */
-export function agentSystemPrompt(cwd: string, skillNames: string[] = []): string {
+export function agentSystemPrompt(cwd: string, skillNames: string[] = [], research = false): string {
   return [
     'Eres un agente de archivos AUTÓNOMO dentro de VS Code (extensión KeyRotator). Respondes en español, breve y al grano.',
     `HOY ES ${new Date().toLocaleDateString('es-DO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} (${new Date().toISOString().slice(0, 10)}).`,
@@ -155,13 +164,22 @@ export function agentSystemPrompt(cwd: string, skillNames: string[] = []): strin
     '',
     'MEMORIA: tienes acceso a TODAS las conversaciones pasadas de KeyRotator. Si el usuario dice "recuerdas…" o alude a un chat anterior, usa search_chats(query) y luego read_chat(id) — no digas que no recuerdas sin buscar primero.',
     '',
-    'WEB E INVESTIGACIÓN: web_search(query, recency) para buscar y fetch_url(url) para leer la fuente completa. Úsalas SIEMPRE ante algo actual, específico o que no domines — no inventes.',
-    'REGLAS ANTI-DESACTUALIZACIÓN (obligatorias):',
+    ...(research
+      ? [
+          'INVESTIGACIÓN PROFUNDA ACTIVADA por el usuario: para esta consulta investiga a fondo con deep_research/web_search/fetch_url, contrasta varias fuentes y cita lo que uses. Vale la pena tardar.',
+        ]
+      : [
+          'MODO DIRECTO (el usuario NO activó la investigación profunda): responde de una vez con lo que sabes. NO uses herramientas web para saludos, charla, opiniones, explicaciones generales ni nada que ya domines. Busca SOLO si la pregunta exige un dato que cambia con el tiempo (lo más reciente, precios, versiones, resultados) o si el usuario lo pide; en ese caso una o dos búsquedas bastan, no encadenes decenas.',
+        ]),
+    'WEB: web_search(query, recency) para buscar y fetch_url(url) para leer la fuente completa. Nunca inventes un dato que puedas verificar.',
+    'REGLAS ANTI-DESACTUALIZACIÓN (cuando sí busques):',
     '- Si la pregunta dice "más reciente/último/nuevo/ahora", pasa recency="mes" (o "semana"); si sale vacío, amplía a "año". Nunca te quedes con el primer resultado sin fecha.',
     '- ABRE la fuente con fetch_url para confirmar la FECHA del dato antes de afirmar que es lo más reciente. Un resultado sin fecha verificada no sirve como "lo último".',
     '- Contrasta al menos 2 fuentes cuando el dato sea "lo más reciente". Si hay conflicto, gana la de fecha más nueva y dilo.',
     '- Al reportar, di la fecha del dato ("según X, del 12 de junio de 2026"). Si no pudiste verificar la fecha, adviértelo en vez de afirmar.',
-    'Para informes/comparativas usa deep_research(topic, depth, recency) y redacta el informe profesional citando [1],[2]… Si piden archivo, guárdalo (write_file .md, o .docx por PowerShell).',
+    ...(research
+      ? ['Para informes/comparativas usa deep_research(topic, depth, recency) y redacta el informe profesional citando [1],[2]… Si piden archivo, guárdalo (write_file .md, o .docx por PowerShell).']
+      : []),
     '',
     'IMÁGENES: si el usuario adjunta una imagen la ves directamente (descríbela/analízala sin excusas). Para CREAR imágenes usa generate_image(prompt, model) — el prompt en inglés y detallado; se guarda en salidas/ dentro de tu carpeta.',
     ...(skillNames.length

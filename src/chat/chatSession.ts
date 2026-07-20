@@ -11,8 +11,16 @@ import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSum
 import type { WebChatRunner, WebCaps } from './webChatRunner.js';
 import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
 import { runAgentTurn, type ContentPart } from '../agent/agentLoop.js';
-import { AGENT_TOOLS, executeTool, agentSystemPrompt, readSkill } from '../agent/tools.js';
-import { webSearch, fetchUrl, generateImage, deepResearch, imageToDataUrl, isImageFile } from '../agent/aiTools.js';
+import { AGENT_TOOLS, toolsFor, executeTool, agentSystemPrompt, readSkill } from '../agent/tools.js';
+import {
+  webSearch,
+  fetchUrl,
+  generateImage,
+  deepResearch,
+  imageToDataUrl,
+  isImageFile,
+  suggestModels,
+} from '../agent/aiTools.js';
 import {
   pickDirector,
   extractJson,
@@ -254,6 +262,12 @@ export class ChatSession {
   /** Live-status bookkeeping for agency calls whose text isn't streamed out. */
   private agencyChars = 0;
   private lastStatusAt = 0;
+  /**
+   * Deep-research switch (bottom bar). OFF by default: without it even a
+   * "hola" triggered web searches, so the tool is removed and the prompt tells
+   * the model to answer directly.
+   */
+  private research = false;
 
   constructor(private backend: ChatBackend) {}
 
@@ -311,6 +325,11 @@ export class ChatSession {
   /** Individual (one model) vs agency (a director orchestrates all of them). */
   setMode(mode: 'individual' | 'agency'): void {
     this.mode = mode;
+  }
+
+  /** Turn deep research on/off for the next turns (bottom-bar switch). */
+  setResearch(on: boolean): void {
+    this.research = on;
   }
 
   get currentMode(): 'individual' | 'agency' {
@@ -920,6 +939,7 @@ export class ChatSession {
 
   /** Tool set for agency workers (same built-ins; MCP stays in individual mode). */
   private agencyTools(): unknown[] {
+    // La agencia investiga por diseño: su director necesita deep_research.
     return AGENT_TOOLS;
   }
 
@@ -1006,7 +1026,7 @@ export class ChatSession {
     const gate = this.agentGate;
     s.model = oai.model;
     if (s.messages.length === 0) {
-      s.messages.push({ role: 'system', content: agentSystemPrompt(s.cwd, ctx.skillNames()) });
+      s.messages.push({ role: 'system', content: agentSystemPrompt(s.cwd, ctx.skillNames(), this.research) });
     }
     // Visión: las imágenes adjuntas viajan como partes image_url (data URL);
     // los demás adjuntos se mencionan por ruta para que el agente los lea.
@@ -1034,7 +1054,7 @@ export class ChatSession {
       mcpTools = []; // a broken MCP server must not break the chat
     }
     const mcpByName = new Map(mcpTools.map((t) => [(t.def as { function: { name: string } }).function.name, t]));
-    const tools = [...AGENT_TOOLS, ...mcpTools.map((t) => t.def)];
+    const tools = [...toolsFor(this.research), ...mcpTools.map((t) => t.def)];
 
     const execute = async (name: string, args: string): Promise<string> => {
       // Built-in memory tools resolve here (they need the store); skills read
@@ -1135,7 +1155,14 @@ export class ChatSession {
         handlers.onDone('');
         return;
       }
-      handlers.onError(`Error de ${account.label}: ${res.error}`);
+      // Ante un 404 el id del modelo suele estar mal: preguntamos al proveedor
+      // qué ids acepta la key y los sugerimos.
+      let extra = '';
+      if (/404/.test(res.error)) {
+        handlers.onStatus?.('Comprobando qué modelos acepta tu API key…');
+        extra = await suggestModels(oai.endpoint, oai.apiKey, oai.model);
+      }
+      handlers.onError(`Error de ${account.label}: ${res.error}${extra}`);
       return;
     }
     handlers.onDone(res.text);

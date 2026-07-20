@@ -154,6 +154,28 @@ export function isTransientStatus(status: number): boolean {
   return status === 408 || status === 429 || status === 502 || status === 503 || status === 504;
 }
 
+/**
+ * Turns an HTTP failure into an actionable message (pure, tested). A 404 is
+ * NOT a blip: it means that model id doesn't exist on that endpoint (or isn't
+ * enabled for the key), which is exactly what happened with deepseek-v4-pro.
+ */
+export function explainHttpError(status: number, body: string, model: string): string {
+  const detail = body ? `: ${body}` : '';
+  switch (status) {
+    case 404:
+      return `el modelo "${model}" no existe en ese endpoint o tu API key no lo tiene habilitado (HTTP 404). Abre build.nvidia.com, copia el id EXACTO del modelo y vuelve a pegar su código en KeyRotator${detail}`;
+    case 401:
+    case 403:
+      return `tu API key fue rechazada para "${model}" (HTTP ${status}). Revisa que la key sea válida y tenga acceso a ese modelo${detail}`;
+    case 400:
+      return `el modelo "${model}" rechazó la petición (HTTP 400). Suele pasar cuando el modelo NO soporta llamadas a herramientas (function calling); prueba con otro modelo${detail}`;
+    case 413:
+      return `la conversación es demasiado grande para "${model}" (HTTP 413). Empieza un chat nuevo o reduce los adjuntos${detail}`;
+    default:
+      return `HTTP ${status}${detail || ' (el servidor no dio detalle)'}`;
+  }
+}
+
 /** Backoff for attempt n (0-based), in ms (pure, tested). */
 export function retryDelay(attempt: number): number {
   return Math.min(2000 * 2 ** attempt, 15_000);
@@ -225,10 +247,7 @@ async function streamCall(
         await sleep(wait);
         continue;
       }
-      return {
-        error: `HTTP ${res.status}${msg ? `: ${msg}` : ' (el servidor no dio detalle; suele ser una caída momentánea)'}`,
-        rateLimited: res.status === 429,
-      };
+      return { error: explainHttpError(res.status, msg, opts.model), rateLimited: res.status === 429 };
     }
     return readStream(res, opts);
   }

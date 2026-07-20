@@ -255,6 +255,49 @@ export function imageToDataUrl(file: string): string | null {
   }
 }
 
+/** Ranks available model ids by similarity to the one that failed (pure, tested). */
+export function closestModels(wanted: string, available: string[], limit = 5): string[] {
+  const w = wanted.toLowerCase();
+  // Ojo: tokens de 2 caracteres SÍ cuentan — "v4" es justo lo que distingue
+  // deepseek-v4 de deepseek-r2. Filtrarlos hacía perder la pista útil.
+  const parts = w.split(/[^a-z0-9.]+/).filter((p) => p.length >= 2);
+  return available
+    .map((id) => {
+      const s = id.toLowerCase();
+      let score = 0;
+      for (const p of parts) if (s.includes(p)) score += p.length;
+      if (s.startsWith(w.split('/')[0])) score += 3; // misma familia/vendor
+      return { id, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+    .slice(0, limit)
+    .map((x) => x.id);
+}
+
+/**
+ * On a 404 the model id is usually wrong: ask the provider which ids the key
+ * really has and suggest the closest ones. Never throws.
+ */
+export async function suggestModels(endpoint: string, apiKey: string, wanted: string): Promise<string> {
+  try {
+    const res = await fetch(endpoint.replace(/\/+$/, '') + '/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return '';
+    const json = (await res.json()) as { data?: { id: string }[] };
+    const ids = (json.data ?? []).map((m) => m.id);
+    if (ids.length === 0) return '';
+    const near = closestModels(wanted, ids);
+    return near.length
+      ? `\n\nModelos parecidos que SÍ acepta tu key:\n${near.map((i) => `  • ${i}`).join('\n')}`
+      : `\n\nTu key tiene ${ids.length} modelos disponibles, pero ninguno se parece a "${wanted}".`;
+  } catch {
+    return '';
+  }
+}
+
 export function isImageFile(file: string): boolean {
   return /\.(png|jpe?g|webp|gif)$/i.test(file);
 }
