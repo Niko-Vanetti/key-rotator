@@ -1146,6 +1146,8 @@ export function activate(context: vscode.ExtensionContext) {
         return 'deny' as const; // Cancelar / cerrar el diálogo = denegar
       },
       store: agentStore,
+      directorModel: () =>
+        vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto').trim() || 'auto',
       // Plantilla de la agencia: un modelo por API key utilizable.
       roster: async () => {
         const metas = keyManager.getAllMeta().filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled');

@@ -300,6 +300,11 @@
           "default": "",
           "description": "Opcional: modelo fijo para cuentas OpenRouter en el chat/agente (formato 'proveedor/modelo'; los ':free' no cuestan). Vacío = sin default; eliges desde el selector del chat, que carga la lista real desde la API de tu cuenta."
         },
+        "keyRotator.agencyDirector": {
+          "type": "string",
+          "default": "auto",
+          "description": "Modo agencia: qué modelo dirige (investiga, reparte, evalúa y contrata). 'auto' elige el mejor disponible, prefiriendo los de Google. También puedes escribir el id exacto de uno de tus modelos, o elegirlo en el menú ▾ del chat."
+        },
         "keyRotator.agentUseMcp": {
           "type": "boolean",
           "default": true,

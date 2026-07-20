@@ -10,6 +10,14 @@ import {
   routeToMember,
   routerPrompt,
   specialistPrompt,
+  evaluationPrompt,
+  parseVerdict,
+  cvPrompt,
+  parseCv,
+  handoffBrief,
+  findNewcomer,
+  saysModelReady,
+  looksLikeComplaint,
   directorResearchPrompt,
   type AgencyModel,
 } from '../src/agent/agency.js';
@@ -153,6 +161,87 @@ test('routerPrompt lists every member with its scope', () => {
   const p = routerPrompt('el login falla', TEAM);
   assert.match(p, /Backend \(z-ai\/glm-5\.2\) → responsable de: API/);
   assert.match(p, /TODOS/);
+});
+
+// ---- ciclo de evaluación / relevo / contratación ----------------------------
+
+test('pickDirector honours an explicitly assigned director', () => {
+  assert.equal(pickDirector(ROSTER, 'deepseek')?.model, 'deepseek-ai/deepseek-v4-pro');
+  assert.equal(pickDirector(ROSTER, 'auto')?.model, 'google/gemma-4-31b-it');
+  // Un director inexistente cae a la heurística en vez de romper.
+  assert.equal(pickDirector(ROSTER, 'modelo-fantasma')?.model, 'google/gemma-4-31b-it');
+});
+
+test('parseVerdict reads the three verdicts and validates the replacement', () => {
+  const keep = parseVerdict('MANTENER: va mejorando', ROSTER, 'z-ai/glm-5.2');
+  assert.equal(keep.action, 'keep');
+
+  const rep = parseVerdict('REEMPLAZAR deepseek-ai/deepseek-v4-pro: es mejor en backend', ROSTER, 'z-ai/glm-5.2');
+  assert.equal(rep.action, 'replace');
+  assert.equal(rep.action === 'replace' && rep.model, 'deepseek-ai/deepseek-v4-pro');
+  assert.match(rep.action === 'replace' ? rep.reason : '', /mejor en backend/);
+
+  // Pide reemplazo por un modelo que no tiene → se convierte en contratación.
+  const noOne = parseVerdict('REEMPLAZAR qwen/qwen3-max: sería ideal', ROSTER, 'z-ai/glm-5.2');
+  assert.equal(noOne.action, 'hire');
+
+  assert.equal(parseVerdict('CONTRATAR: ninguno sirve', ROSTER, 'z-ai/glm-5.2').action, 'hire');
+});
+
+test('parseCv extracts the candidate id and the CV body', () => {
+  const cv = parseCv('CANDIDATO: qwen/qwen3-coder-480b\nCURRÍCULUM:\n- Fortalezas: código\n- Evidencia: junio 2026');
+  assert.equal(cv?.candidate, 'qwen/qwen3-coder-480b');
+  assert.match(cv!.cv, /Fortalezas: código/);
+  assert.equal(parseCv('no hay candidato aquí'), null);
+});
+
+test('handoffBrief hands the work and the reason to the substitute', () => {
+  const brief = handoffBrief(
+    { role: 'Backend', model: 'z-ai/glm-5.2', scope: 'API', lastWork: 'endpoint /login a medias' },
+    'fallaba la autenticación'
+  );
+  assert.match(brief, /sustituyes a z-ai\/glm-5\.2 como Backend/);
+  assert.match(brief, /fallaba la autenticación/);
+  assert.match(brief, /endpoint \/login a medias/);
+  assert.match(brief, /verifica el estado real/);
+});
+
+test('findNewcomer picks the model that is not on the team yet', () => {
+  const team = [{ role: 'Backend', model: 'z-ai/glm-5.2', scope: 'API' }];
+  assert.equal(findNewcomer(ROSTER, team, 'deepseek')?.model, 'deepseek-ai/deepseek-v4-pro');
+  // Sin candidato explícito, toma el primero libre.
+  assert.ok(findNewcomer(ROSTER, team)?.model !== 'z-ai/glm-5.2');
+  // Todos ocupados → no hay nadie nuevo.
+  assert.equal(findNewcomer(ROSTER, ROSTER.map((m) => ({ role: 'r', model: m.model, scope: 's' }))), null);
+});
+
+test('saysModelReady and looksLikeComplaint detect the user intent', () => {
+  assert.equal(saysModelReady('ya lo integré, dale'), true);
+  assert.equal(saysModelReady('ya está listo el modelo'), true);
+  assert.equal(saysModelReady('hazme un informe'), false);
+  assert.equal(looksLikeComplaint('esta parte no funciona'), true);
+  assert.equal(looksLikeComplaint('sigue fallando el login'), true);
+  assert.equal(looksLikeComplaint('gracias, quedó bien'), false);
+});
+
+test('evaluationPrompt shows the strikes and the alternatives available', () => {
+  const p = evaluationPrompt(
+    { role: 'Backend', model: 'z-ai/glm-5.2', scope: 'API', strikes: 2 },
+    'sigue sin funcionar',
+    ROSTER
+  );
+  assert.match(p, /INTENTOS FALLIDOS EN ESTE ROL: 2/);
+  assert.match(p, /deepseek-ai\/deepseek-v4-pro/);
+  assert.doesNotMatch(p.split('OTROS MODELOS')[1], /z-ai\/glm-5\.2/); // no se propone a sí mismo
+  assert.match(p, /CONTRATAR:/);
+});
+
+test('cvPrompt excludes the models already owned and demands dated evidence', () => {
+  const p = cvPrompt('Backend', 'API', 'no rinde', ROSTER, '19 de julio de 2026');
+  assert.match(p, /NO los propongas/);
+  assert.match(p, /z-ai\/glm-5\.2/);
+  assert.match(p, /VALIDA la fecha/);
+  assert.match(p, /19 de julio de 2026/);
 });
 
 test('recencyParam maps the windows for the search engine', () => {

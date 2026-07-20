@@ -220,6 +220,11 @@ export class ChatPanel {
         this.post(this.metaMsg(this.session.currentSessionId));
         this.post({ type: 'config', effort });
         this.post({ type: 'accounts', accounts: this.accountsForMenu() });
+        this.post({
+          type: 'directors',
+          models: this.backend.listApiAccountModels?.() ?? [],
+          selected: vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto'),
+        });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
         this.postModels();
         this.postWebControls();
@@ -288,6 +293,17 @@ export class ChatPanel {
       case 'stop':
         this.session.stop();
         break;
+      case 'setDirector': {
+        const v = (msg.value ?? 'auto').trim() || 'auto';
+        await vscode.workspace
+          .getConfiguration('keyRotator')
+          .update('agencyDirector', v, vscode.ConfigurationTarget.Global);
+        this.post({
+          type: 'info',
+          text: v === 'auto' ? '🎩 Director: automático (el mejor disponible).' : `🎩 Director de la agencia: ${v}`,
+        });
+        break;
+      }
       case 'setMode': {
         const mode = msg.value === 'agency' ? 'agency' : 'individual';
         this.session.setMode(mode);

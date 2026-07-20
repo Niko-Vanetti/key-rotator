@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage } from './agentLoop.js';
-import type { AgencyTeamMember } from './agency.js';
+import type { AgencyTeamMember, AgencyVacancy } from './agency.js';
 
 /**
  * The agent's OWN session store: one JSON file per conversation under
@@ -26,6 +26,8 @@ export interface AgentSession {
    * area, so later complaints about it route back to the same specialist.
    */
   team?: AgencyTeamMember[];
+  /** Open position waiting for the user to integrate the recommended model. */
+  vacancy?: AgencyVacancy | null;
 }
 
 export interface AgentSessionSummary {

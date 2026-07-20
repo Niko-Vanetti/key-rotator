@@ -42,6 +42,157 @@ export interface AgencyTeamMember {
   evidence?: string;
   /** Summary of what they delivered last, so they can answer about it. */
   lastWork?: string;
+  /** Failed attempts in this role — 2 triggers the director's evaluation. */
+  strikes?: number;
+  /** Models that held this role before, with why they were replaced. */
+  predecessors?: { model: string; reason: string }[];
+  /** Context handed over by the previous holder of the role. */
+  handoff?: string;
+}
+
+/** An open position: the director wants a model the user doesn't have yet. */
+export interface AgencyVacancy {
+  role: string;
+  scope: string;
+  /** Why the previous model wasn't enough. */
+  reason: string;
+  /** The candidate's "CV" as researched by the director (shown to the user). */
+  cv: string;
+  /** Suggested model id on NVIDIA Build. */
+  candidate: string;
+  /** Work in progress the newcomer must continue. */
+  handoff?: string;
+}
+
+/** The director's verdict on a struggling specialist (pure, tested). */
+export type Verdict =
+  | { action: 'keep' }
+  | { action: 'replace'; model: string; reason: string }
+  | { action: 'hire'; reason: string };
+
+/** Prompt: is this specialist up to the job, or should it be replaced? */
+export function evaluationPrompt(
+  member: AgencyTeamMember,
+  userComplaint: string,
+  roster: AgencyModel[]
+): string {
+  const others = roster.filter((r) => r.model !== member.model);
+  return [
+    'Eres el DIRECTOR de una agencia de IA. Evalúas si un especialista da la talla.',
+    '',
+    `ESPECIALISTA: ${member.role} — modelo ${member.model}`,
+    `RESPONSABLE DE: ${member.scope}`,
+    `INTENTOS FALLIDOS EN ESTE ROL: ${member.strikes ?? 0}`,
+    member.lastWork ? `ÚLTIMA ENTREGA (resumen):\n${member.lastWork.slice(0, 2000)}` : '',
+    '',
+    `QUEJA / SITUACIÓN ACTUAL DEL USUARIO:\n${userComplaint}`,
+    '',
+    'OTROS MODELOS QUE EL USUARIO YA TIENE (podrías moverlo a este rol):',
+    ...(others.length ? others.map((o) => `- ${o.model}`) : ['- (ninguno más)']),
+    '',
+    'Investiga con tus herramientas si hace falta (recency="mes") y decide. Responde SOLO con UNA línea:',
+    'MANTENER: <por qué merece seguir>',
+    'REEMPLAZAR <id exacto de un modelo de la lista de arriba>: <por qué ese sí puede>',
+    'CONTRATAR: <por qué ninguno de los que tiene sirve para esto>',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Parses the director's verdict against the real roster (pure, tested). */
+export function parseVerdict(reply: string, roster: AgencyModel[], currentModel: string): Verdict {
+  const line = reply.trim();
+  const reason = (s: string) => s.replace(/^[^:]*:\s*/, '').trim().slice(0, 300);
+  if (/^\s*reemplazar/i.test(line)) {
+    const wanted = line.replace(/^\s*reemplazar\s*/i, '').split(':')[0].trim();
+    const match = matchModel(wanted, roster.filter((r) => r.model !== currentModel));
+    if (match) return { action: 'replace', model: match.model, reason: reason(line) };
+    // Pidió reemplazo pero no hay a quién: se convierte en contratación.
+    return { action: 'hire', reason: reason(line) };
+  }
+  if (/^\s*contratar/i.test(line)) return { action: 'hire', reason: reason(line) };
+  return { action: 'keep' };
+}
+
+/** Prompt: research NVIDIA Build and write the candidate's CV for the user. */
+export function cvPrompt(role: string, scope: string, reason: string, owned: AgencyModel[], today: string): string {
+  return [
+    `Eres el DIRECTOR de una agencia de IA. HOY ES ${today}.`,
+    `Necesitas cubrir el puesto de "${role}" (responsable de: ${scope}).`,
+    `Motivo de la vacante: ${reason}`,
+    '',
+    'El usuario YA TIENE estos modelos (NO los propongas):',
+    ...owned.map((o) => `- ${o.model}`),
+    '',
+    'INVESTIGA en build.nvidia.com qué modelo DISPONIBLE AHÍ sería el mejor para este puesto. Usa web_search/fetch_url con recency="mes" (amplía a "año" si no hay nada) y VALIDA la fecha: descarta modelos viejos o descontinuados.',
+    '',
+    'Responde con este formato exacto, en español y sin nada más:',
+    'CANDIDATO: <id exacto del modelo en NVIDIA Build>',
+    'CURRÍCULUM:',
+    '- Fortalezas para este puesto: …',
+    '- Evidencia y fecha: … (di de cuándo es el dato)',
+    '- Por qué supera a los que ya tengo: …',
+    '- Limitaciones o riesgos: …',
+  ].join('\n');
+}
+
+/** Extracts {candidate, cv} from the director's CV answer (pure, tested). */
+export function parseCv(reply: string): { candidate: string; cv: string } | null {
+  const m = reply.match(/CANDIDATO:\s*([^\s\n]+)/i);
+  if (!m) return null;
+  const candidate = m[1].trim().replace(/[.,;]$/, '');
+  const cvIdx = reply.search(/CURR[IÍ]CULUM:/i);
+  const cv = cvIdx === -1 ? reply.trim() : reply.slice(cvIdx).trim();
+  return { candidate, cv };
+}
+
+/** Context the newcomer receives from the model it replaces (pure, tested). */
+export function handoffBrief(prev: AgencyTeamMember, reason: string): string {
+  return [
+    `TRASPASO DE PUESTO: sustituyes a ${prev.model} como ${prev.role}.`,
+    `Área de la que ahora eres responsable: ${prev.scope}`,
+    `Motivo del cambio: ${reason}`,
+    prev.lastWork ? `\nLO QUE DEJÓ HECHO (revísalo, puede tener errores):\n${prev.lastWork.slice(0, 6000)}` : '',
+    '\nContinúa desde ahí: primero verifica el estado real (lee los archivos, ejecuta lo que haya), corrige lo que esté mal y sigue con el trabajo.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Finds a roster model that isn't on the team yet — used when the user says
+ * "ya integré el modelo" to fill an open vacancy (pure, tested).
+ */
+export function findNewcomer(roster: AgencyModel[], team: AgencyTeamMember[], candidate?: string): AgencyModel | null {
+  const used = new Set(team.map((t) => t.model.toLowerCase()));
+  const fresh = roster.filter((r) => !used.has(r.model.toLowerCase()));
+  if (fresh.length === 0) return null;
+  if (candidate) {
+    const exact = matchModel(candidate, fresh);
+    if (exact) return exact;
+  }
+  return fresh[0];
+}
+
+/**
+ * True when the message reads as "this doesn't work" — used to count strikes
+ * against the responsible specialist (pure, tested).
+ */
+export function looksLikeComplaint(text: string): boolean {
+  const t = text.toLowerCase();
+  return /(no (me )?(funciona|sirve|va|anda|carga|corre|compila|abre)|sigue (fallando|roto|igual|sin)|falla|error|est[áa] (mal|roto)|no qued[óo]|mal hecho|otra vez)/.test(
+    t
+  );
+}
+
+/** True when the user is telling us a new model is ready (pure, tested). */
+export function saysModelReady(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    /(ya (la |lo )?(integr|agregu|puse|añad|anad|pegu)|est[áa] list[ao]|ya la tienes|ya lo tienes|ya est[áa] (ah[íi]|disponible|integrad))/.test(
+      t
+    ) || /(contrat|incorpor)(a|ada|ado|é|e)\b/.test(t)
+  );
 }
 
 /** Builds the persistent team from a validated plan (pure, tested). */
@@ -99,6 +250,7 @@ export function specialistPrompt(member: AgencyTeamMember, base: string): string
     base,
     '',
     `IDENTIDAD: eres el ${member.role} de esta agencia (modelo ${member.model}). Eres el RESPONSABLE de: ${member.scope}.`,
+    member.handoff ? `\n${member.handoff}` : '',
     member.lastWork ? `\nLO QUE ENTREGASTE ANTES:\n${member.lastWork.slice(0, 6000)}` : '',
     '',
     'El usuario te está hablando A TI sobre tu área. Responde en primera persona empezando por presentarte en una línea (ej. "Soy el encargado del backend").',
@@ -184,8 +336,13 @@ export function resolveNames(wanted: unknown, available: string[]): string[] {
  * first (the user's pick), then other top-tier general models, then whatever
  * exists. Pure — unit-tested.
  */
-export function pickDirector(models: AgencyModel[]): AgencyModel | null {
+export function pickDirector(models: AgencyModel[], preferred?: string): AgencyModel | null {
   if (models.length === 0) return null;
+  // Director elegido a mano en los ajustes/menú: manda sobre la heurística.
+  if (preferred && preferred !== 'auto') {
+    const chosen = matchModel(preferred, models);
+    if (chosen) return chosen;
+  }
   const score = (m: string): number => {
     const s = m.toLowerCase();
     if (/gemini|google\/|gemma/.test(s)) return 100;

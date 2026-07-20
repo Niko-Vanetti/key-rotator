@@ -189,6 +189,7 @@
     if (act) { vscode.postMessage({ type: act }); closeMenus(); }
   });
   function renderAccounts(accounts) {
+    if (!acctList) return;
     acctList.innerHTML = '';
     (accounts || []).forEach((a) => {
       const b = document.createElement('button');
@@ -196,6 +197,27 @@
       b.textContent = (a.active ? '● ' : '○ ') + a.label;
       b.addEventListener('click', () => { vscode.postMessage({ type: 'switchAccount', id: a.id }); closeMenus(); });
       acctList.appendChild(b);
+    });
+  }
+
+  // Quién dirige la agencia: 'auto' (mejor disponible, prefiere Google) o uno fijo.
+  function renderDirectors(models, selected) {
+    const box = document.getElementById('directorList');
+    if (!box) return;
+    box.innerHTML = '';
+    const opts = [{ id: 'auto', label: 'Automático (el mejor disponible)' }].concat(
+      (models || []).map((m) => ({ id: m.model, label: m.model }))
+    );
+    opts.forEach((o) => {
+      const b = document.createElement('button');
+      const on = (selected || 'auto') === o.id;
+      b.className = 'menu-item' + (on ? ' active' : '');
+      b.textContent = (on ? '● ' : '○ ') + o.label;
+      b.addEventListener('click', () => {
+        vscode.postMessage({ type: 'setDirector', value: o.id });
+        renderDirectors(models, o.id);
+      });
+      box.appendChild(b);
     });
   }
 
@@ -423,6 +445,7 @@
       case 'webControls': renderWebControls(msg); break;
       case 'webAttach': addAttachChip(msg.name, msg.path); break;
       case 'accounts': renderAccounts(msg.accounts); break;
+      case 'directors': renderDirectors(msg.models, msg.selected); break;
       case 'slash': slashCommands = msg.commands || []; break;
       case 'loading':
         showLoading(msg.title);

@@ -22,6 +22,14 @@ import {
   routeToMember,
   routerPrompt,
   specialistPrompt,
+  evaluationPrompt,
+  parseVerdict,
+  cvPrompt,
+  parseCv,
+  handoffBrief,
+  findNewcomer,
+  saysModelReady,
+  looksLikeComplaint,
   directorResearchPrompt,
   directorSynthesisPrompt,
   type AgencyModel,
@@ -138,6 +146,8 @@ export interface AgentBackendContext {
   store: AgentStore;
   /** Every usable model (one per API key) — the agency's roster. */
   roster(): Promise<AgencyModel[]>;
+  /** Model id chosen to direct the agency, or 'auto' / undefined. */
+  directorModel?(): string | undefined;
   /** Names of the available skills, for the system prompt. */
   skillNames(): string[];
   /** Directories to resolve a skill's markdown from (most specific first). */
@@ -413,7 +423,7 @@ export class ChatSession {
     const gate = this.agentGate;
     s.messages.push({ role: 'user', content: text });
 
-    const director = pickDirector(roster)!;
+    const director = pickDirector(roster, ctx.directorModel?.())!;
     handlers.onModel(`agencia · director ${director.model}`);
     handlers.onInfo(`🏢 Modo agencia — director: ${director.model} · modelos disponibles: ${roster.length}`);
 
@@ -588,6 +598,63 @@ export class ChatSession {
     const team = s.team!;
     handlers.onInfo(`🏢 Equipo activo: ${team.map((t) => `${t.role} (${t.model})`).join(' · ')}`);
 
+    // 0) ¿Hay una vacante y el usuario dice que ya integró el modelo? Entonces
+    //    el recién llegado toma el puesto y continúa el trabajo del anterior.
+    if (s.vacancy && saysModelReady(text)) {
+      const newcomer = findNewcomer(roster, team, s.vacancy.candidate);
+      if (!newcomer) {
+        handlers.onInfo(
+          `⚠ Todavía no veo un modelo nuevo en tus API keys. Pega el código de "${s.vacancy.candidate}" en KeyRotator y vuelve a avisarme.`
+        );
+      } else {
+        const v = s.vacancy;
+        const member: AgencyTeamMember = {
+          role: v.role,
+          model: newcomer.model,
+          scope: v.scope,
+          evidence: `Contratado el ${new Date().toLocaleDateString('es-DO')}: ${v.reason}`,
+          handoff: v.handoff,
+        };
+        const idx = team.findIndex((t) => t.role === v.role);
+        if (idx >= 0) {
+          member.predecessors = [
+            ...(team[idx].predecessors ?? []),
+            { model: team[idx].model, reason: v.reason },
+          ];
+          team[idx] = member;
+        } else {
+          team.push(member);
+        }
+        s.vacancy = null;
+        handlers.onInfo(`🤝 ${newcomer.model} se incorpora como ${v.role} y continúa el trabajo pendiente.`);
+        const model = newcomer;
+        handlers.onModel(`${member.role} · ${member.model}`);
+        const res = await runAgentTurn({
+          endpoint: model.endpoint,
+          apiKey: model.apiKey,
+          model: model.model,
+          messages: [
+            {
+              role: 'system',
+              content: `${specialistPrompt(member, agentSystemPrompt(s.cwd, ctx.skillNames()))}\n\n${v.handoff ?? ''}`,
+            },
+            { role: 'user', content: text },
+          ],
+          tools: this.agencyTools(),
+          execute: (n, a) => this.agencyExecute(n, a, s, gate, model, ctx),
+          onDelta: (t) => handlers.onDelta(t),
+          onToolStart: (n) => handlers.onInfo(`   🔧 ${member.role}: ${n}`),
+          maxPerMinute: ChatSession.RPM_CAPS[model.provider],
+          throttleKey: ChatSession.RPM_CAPS[model.provider] ? `${model.provider}:${model.accountId}` : undefined,
+          params: model.params,
+          signal: this.abort?.signal,
+        });
+        if (!('error' in res) && res.text) member.lastWork = res.text.slice(0, 8000);
+        this.finishAgencyTurn(s, ctx, res, handlers, member.role);
+        return;
+      }
+    }
+
     // 1) ¿De quién es esto? (llamada corta al director; si falla, heurística)
     let owner: AgencyTeamMember | null = null;
     const routed = await runOne(
@@ -627,6 +694,68 @@ export class ChatSession {
       });
       this.finishAgencyTurn(s, ctx, res, handlers, 'director');
       return;
+    }
+
+    // 2b) ¿Este responsable ya venía fallando? El director lo evalúa antes de
+    //     dejarlo intentar otra vez: puede mantenerlo, reemplazarlo por otro
+    //     modelo del equipo, o buscar un candidato que el usuario no tiene.
+    owner.strikes = (owner.strikes ?? 0) + (looksLikeComplaint(text) ? 1 : 0);
+    if ((owner.strikes ?? 0) >= 2) {
+      handlers.onInfo(`⚖ El director evalúa a ${owner.role} (${owner.model}) tras ${owner.strikes} señalamientos…`);
+      const verdictRes = await runOne(
+        director,
+        evaluationPrompt(owner, text, roster),
+        `${agentSystemPrompt(s.cwd, ctx.skillNames())}\n\nEres el director. Investiga si hace falta y responde SOLO la línea del veredicto.`
+      );
+      const verdict = 'error' in verdictRes ? { action: 'keep' as const } : parseVerdict(verdictRes.text, roster, owner.model);
+
+      if (verdict.action === 'replace') {
+        const prev = { ...owner };
+        handlers.onInfo(`🔁 Relevo: ${prev.model} deja el puesto de ${owner.role}. Entra ${verdict.model}.\n   Motivo: ${verdict.reason}`);
+        owner.predecessors = [...(prev.predecessors ?? []), { model: prev.model, reason: verdict.reason }];
+        owner.model = verdict.model;
+        owner.handoff = handoffBrief(prev, verdict.reason);
+        owner.strikes = 0;
+        owner.evidence = `Relevo del ${new Date().toLocaleDateString('es-DO')}: ${verdict.reason}`;
+      } else if (verdict.action === 'hire') {
+        handlers.onInfo('🔎 Ninguno de tus modelos da la talla para esto. Buscando candidato en NVIDIA Build…');
+        const today = new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' });
+        const cvRes = await runOne(
+          director,
+          cvPrompt(owner.role, owner.scope, verdict.reason, roster, today),
+          `${agentSystemPrompt(s.cwd, ctx.skillNames())}\n\nEres el director buscando personal. Investiga de verdad y responde en el formato pedido.`
+        );
+        const cv = 'error' in cvRes ? null : parseCv(cvRes.text);
+        if (cv) {
+          s.vacancy = {
+            role: owner.role,
+            scope: owner.scope,
+            reason: verdict.reason,
+            cv: cv.cv,
+            candidate: cv.candidate,
+            handoff: handoffBrief(owner, verdict.reason),
+          };
+          try {
+            ctx.store.save(s);
+          } catch {
+            /* best-effort */
+          }
+          handlers.onDone(
+            [
+              `**Vacante abierta: ${owner.role}**`,
+              '',
+              `${owner.model} no está dando la talla para *${owner.scope}*. Motivo: ${verdict.reason}`,
+              '',
+              `### Candidato propuesto: \`${cv.candidate}\``,
+              cv.cv,
+              '',
+              `👉 Si te parece, agrégalo en KeyRotator (pega su código de build.nvidia.com) y dime **"ya lo integré"** — tomará el puesto y continuará el trabajo desde donde quedó.`,
+            ].join('\n')
+          );
+          return;
+        }
+        handlers.onInfo('⚠ No pude armar el currículum del candidato; sigo con el responsable actual.');
+      }
     }
 
     const model = roster.find((r) => r.model === owner!.model) ?? director;
