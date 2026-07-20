@@ -267,6 +267,61 @@ export function imageToDataUrl(file: string): string | null {
   }
 }
 
+/**
+ * Prueba REAL de un modelo: una petición mínima para ver si responde de
+ * verdad. Comprobado en vivo que `/v1/models` NO sirve para esto — lista
+ * modelos que luego dan 404 «Not found for account» o que no contestan nunca.
+ */
+export async function pingModel(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  timeoutMs = 25_000
+): Promise<{ ok: boolean; ms: number; detail: string }> {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(endpoint.replace(/\/+$/, '') + '/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'Di solo: PONG' }],
+        max_tokens: 16,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const body = await res.text();
+    const ms = Date.now() - t0;
+    if (!res.ok) {
+      let detail = body.slice(0, 120);
+      try {
+        detail = (JSON.parse(body) as { detail?: string })?.detail ?? detail;
+      } catch {
+        /* texto crudo */
+      }
+      return { ok: false, ms, detail: `HTTP ${res.status}: ${detail}` };
+    }
+    const j = JSON.parse(body) as {
+      choices?: { message?: { content?: string; reasoning_content?: string } }[];
+    };
+    const m = j.choices?.[0]?.message;
+    const text = (m?.content || m?.reasoning_content || '').trim();
+    return text
+      ? { ok: true, ms, detail: `responde en ${(ms / 1000).toFixed(1)}s` }
+      : { ok: false, ms, detail: 'respondió vacío (quizá no soporta herramientas)' };
+  } catch (e) {
+    const ms = Date.now() - t0;
+    return {
+      ok: false,
+      ms,
+      detail: /abort|timeout/i.test((e as Error).message)
+        ? `sin respuesta en ${Math.round(ms / 1000)}s — modelo caído o no disponible para tu cuenta`
+        : (e as Error).message,
+    };
+  }
+}
+
 /** Ranks available model ids by similarity to the one that failed (pure, tested). */
 export function closestModels(wanted: string, available: string[], limit = 5): string[] {
   const w = wanted.toLowerCase();

@@ -197,9 +197,18 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
   };
 }
 
-/** Gateway hiccups that are worth retrying (502/503/504, 408, 429). */
-export function isTransientStatus(status: number): boolean {
-  return status === 408 || status === 429 || status === 502 || status === 503 || status === 504;
+/**
+ * Fallos que vale la pena reintentar. TODO 5xx entra: NVIDIA devuelve
+ * `500 "Inference connection error while making inference request"` cuando su
+ * backend de inferencia se cae un momento — reintentar lo resuelve, y antes
+ * ese 500 mataba el turno al primer intento.
+ */
+export function isTransientStatus(status: number, body = ''): boolean {
+  if (status === 408 || status === 429 || status >= 500) return true;
+  // Verificado en vivo: NVIDIA devuelve a veces
+  // «Function '<uuid>': Not found for account» en un modelo que SÍ funciona
+  // segundos después (re-despliegue del NIM). Ese 404 sí merece reintento.
+  return status === 404 && /not found for account/i.test(body);
 }
 
 /**
@@ -211,7 +220,13 @@ export function explainHttpError(status: number, body: string, model: string): s
   const detail = body ? `: ${body}` : '';
   switch (status) {
     case 404:
-      return `el modelo "${model}" no existe en ese endpoint o tu API key no lo tiene habilitado (HTTP 404). Abre build.nvidia.com, copia el id EXACTO del modelo y vuelve a pegar su código en KeyRotator${detail}`;
+      // Verificado contra la API real: NVIDIA responde
+      // «Function '<uuid>': Not found for account '<cuenta>'» — el id ES
+      // correcto y aparece en /v1/models, pero ESA cuenta no lo tiene
+      // habilitado. Por eso no sirve de nada sugerir ids de /v1/models.
+      return /not found for account/i.test(body)
+        ? `tu cuenta de NVIDIA no tiene habilitado el modelo "${model}" (HTTP 404). El id es válido y sale en el catálogo, pero no está activo para tu API key: entra a build.nvidia.com, abre ese modelo y genera la key DESDE su página ("Get API Key"), o usa otro de tus modelos.`
+        : `el modelo "${model}" no existe en ese endpoint (HTTP 404)${detail}`;
     case 401:
     case 403:
       return `tu API key fue rechazada para "${model}" (HTTP ${status}). Revisa que la key sea válida y tenga acceso a ese modelo${detail}`;
@@ -229,9 +244,16 @@ export function retryDelay(attempt: number): number {
   return Math.min(2000 * 2 ** attempt, 15_000);
 }
 
-const MAX_TRANSIENT_RETRIES = 3;
+const MAX_TRANSIENT_RETRIES = 5;
 /** Hard ceiling per request; long research turns still fit comfortably. */
 const REQUEST_TIMEOUT_MS = 300_000;
+/**
+ * Tiempo máximo hasta el PRIMER byte. Medido contra la API real: un modelo
+ * sano (glm-5.2) responde el primer byte en ~2 s; uno caído
+ * (gemma-4-31b-it en esta cuenta) no manda nada nunca. Sin este corte el chat
+ * se quedaba 5 minutos esperando a un modelo muerto.
+ */
+const FIRST_BYTE_TIMEOUT_MS = 75_000;
 
 async function streamCall(
   opts: AgentTurnOpts,
@@ -287,7 +309,7 @@ async function streamCall(
         /* keep raw */
       }
       // 504 y compañía son caídas momentáneas del gateway: reintentar.
-      if (isTransientStatus(res.status) && attempt < MAX_TRANSIENT_RETRIES && !opts.signal?.aborted) {
+      if (isTransientStatus(res.status, body) && attempt < MAX_TRANSIENT_RETRIES && !opts.signal?.aborted) {
         const wait = retryDelay(attempt);
         onRetry?.(
           `el servidor devolvió ${res.status} — reintento ${attempt + 1}/${MAX_TRANSIENT_RETRIES} en ${Math.round(wait / 1000)}s`
@@ -328,10 +350,38 @@ async function readStream(
   const decoder = new TextDecoder();
   const state = newStreamState();
   let buf = '';
+  let gotFirstByte = false;
 
   for (;;) {
-    const { done, value } = await reader.read();
+    // Un modelo sano manda el primer byte en segundos; uno caído no manda
+    // nada nunca. Cortar aquí evita el cuelgue largo.
+    let read: { done: boolean; value?: Uint8Array } | null;
+    if (gotFirstByte) {
+      read = await reader.read();
+    } else {
+      // OJO: hay que limpiar el temporizador o queda vivo 75 s y mantiene
+      // despierto el proceso (colgaba la suite de tests).
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        read = await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => {
+            timer = setTimeout(() => r(null), FIRST_BYTE_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    if (read === null) {
+      void reader.cancel().catch(() => {});
+      return {
+        error: `el modelo "${opts.model}" no envió nada en ${Math.round(FIRST_BYTE_TIMEOUT_MS / 1000)}s. Suele estar caído o no disponible para tu cuenta: elige otro modelo en el selector de abajo.`,
+      };
+    }
+    const { done, value } = read;
     if (done) break;
+    gotFirstByte = true;
     buf += decoder.decode(value, { stream: true });
     let nl: number;
     while ((nl = buf.indexOf('\n')) !== -1) {

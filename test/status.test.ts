@@ -30,6 +30,10 @@ test('isTransientStatus marca solo los fallos que vale la pena reintentar', () =
   assert.equal(isTransientStatus(503), true);
   assert.equal(isTransientStatus(429), true);
   assert.equal(isTransientStatus(408), true);
+  // El 500 de NVIDIA ("Inference connection error") mataba el turno al primer
+  // intento por no estar en la lista: TODO 5xx debe reintentarse.
+  assert.equal(isTransientStatus(500), true);
+  assert.equal(isTransientStatus(529), true);
   // Errores del cliente: reintentar no arregla nada.
   assert.equal(isTransientStatus(400), false);
   assert.equal(isTransientStatus(401), false);
@@ -111,4 +115,23 @@ test('fetchUrl recorta las páginas enormes y avisa del recorte', async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// ---- comportamiento REAL de NVIDIA, comprobado contra su API ---------------
+
+test('el 404 "Not found for account" de NVIDIA sí se reintenta (es intermitente)', () => {
+  // Verificado en vivo: deepseek-v4-pro dio ese 404 y minutos después
+  // respondía en 668 ms. Es re-despliegue del NIM, no un id inválido.
+  assert.equal(isTransientStatus(404, "Function 'abc': Not found for account 'xyz'"), true);
+  // Un 404 normal (endpoint inexistente) NO se reintenta.
+  assert.equal(isTransientStatus(404, 'Not Found'), false);
+  assert.equal(isTransientStatus(404), false);
+});
+
+test('explainHttpError distingue "no habilitado para tu cuenta" de "no existe"', async () => {
+  const { explainHttpError } = await import('../src/agent/agentLoop.js');
+  const noHabilitado = explainHttpError(404, "Function 'abc': Not found for account 'xyz'", 'google/gemma-3-12b-it');
+  assert.match(noHabilitado, /no tiene habilitado/);
+  assert.match(noHabilitado, /Get API Key/);
+  assert.match(explainHttpError(404, 'Not Found', 'x/y'), /no existe en ese endpoint/);
 });

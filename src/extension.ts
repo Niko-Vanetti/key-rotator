@@ -24,6 +24,7 @@ import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
 import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
 import { listSkillNames } from './agent/tools.js';
 import { parseSnippet, snippetHasData } from './core/snippetParser.js';
+import { pingModel } from './agent/aiTools.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -1164,7 +1165,12 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto').trim() || 'auto',
       // Plantilla de la agencia: un modelo por API key utilizable.
       roster: async () => {
-        const metas = keyManager.getAllMeta().filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled');
+        // Se excluyen los marcados en 'error' por "Probar modelos": si un
+        // modelo no responde (p.ej. gemma-4-31b-it en esta cuenta) no debe
+        // entrar al equipo y menos aún ser elegido director.
+        const metas = keyManager
+          .getAllMeta()
+          .filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled' && a.status !== 'error');
         const out = [];
         for (const meta of metas) {
           const model = openAIModel(meta);
@@ -1320,21 +1326,33 @@ export function activate(context: vscode.ExtensionContext) {
       // pass if the AI replies without an error; API accounts get a key/billing
       // probe.
       const all = keyManager.getAllMeta();
-      let targets = node?.account?.id
+      const targets = node?.account?.id
         ? all.filter((a) => a.id === node.account!.id)
-        : all.filter((a) => a.provider === CHAT_PROVIDER || isWebProvider(a.provider));
+        : all.filter(
+            (a) => a.provider === CHAT_PROVIDER || isWebProvider(a.provider) || isOpenAIProvider(a.provider)
+          );
       if (targets.length === 0) {
         vscode.window.showInformationMessage('KeyRotator: no hay cuentas que probar.');
         return;
       }
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'KeyRotator: probando conexión…' },
+        { location: vscode.ProgressLocation.Notification, title: 'KeyRotator: probando modelos…' },
         async (progress) => {
           for (const meta of targets) {
             progress.report({ message: meta.label });
-            const verdict = isWebProvider(meta.provider)
-              ? await testWebAccount(meta)
-              : await diagnoseAccount(meta.id);
+            // Modelos de NVIDIA/OpenRouter: prueba REAL (una respuesta), no un
+            // listado — /v1/models miente (lista modelos que dan 404 o cuelgan).
+            const verdict = isOpenAIProvider(meta.provider)
+              ? await (async () => {
+                  const key = await keyManager.getApiKey(meta.id);
+                  const model = openAIModel(meta);
+                  if (!key) return { ok: false, detail: 'sin API key guardada' };
+                  if (!model) return { ok: false, detail: 'sin modelo elegido' };
+                  return pingModel(openAIEndpoint(meta), key, model);
+                })()
+              : isWebProvider(meta.provider)
+                ? await testWebAccount(meta)
+                : await diagnoseAccount(meta.id);
             await keyManager.updateAccountMeta(meta.id, {
               status: verdict.ok ? 'active' : 'error',
               lastError: verdict.ok ? undefined : verdict.detail,
