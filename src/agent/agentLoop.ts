@@ -29,13 +29,17 @@ export interface AgentMessage {
 /** Streaming accumulation state for one API call. */
 export interface StreamState {
   content: string;
+  /** Chain-of-thought emitted in `reasoning_content` (fallback for content). */
+  reasoning: string;
+  /** Last reasoning fragment, for the live "razonando…" status. */
+  reasoningDelta?: string;
   toolCalls: Map<number, { id: string; name: string; args: string }>;
   finishReason: string | null;
   error: string | null;
 }
 
 export function newStreamState(): StreamState {
-  return { content: '', toolCalls: new Map(), finishReason: null, error: null };
+  return { content: '', reasoning: '', toolCalls: new Map(), finishReason: null, error: null };
 }
 
 /** Fold one parsed SSE JSON payload into the state; returns the text delta (if any). */
@@ -46,8 +50,13 @@ export function accumulateChunk(state: StreamState, j: unknown): string {
       finish_reason?: string | null;
       delta?: {
         content?: string | null;
+        /** Modelos "de razonamiento" de NVIDIA NIM (gemma, glm, deepseek…). */
+        reasoning_content?: string | null;
+        reasoning?: string | null;
         tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
       };
+      /** Algunos endpoints devuelven el texto final aquí y no en delta. */
+      message?: { content?: string | null; reasoning_content?: string | null };
     }[];
   };
   if (obj?.error?.message) {
@@ -57,6 +66,11 @@ export function accumulateChunk(state: StreamState, j: unknown): string {
   const choice = obj?.choices?.[0];
   if (!choice) return '';
   if (choice.finish_reason) state.finishReason = choice.finish_reason;
+  // Respuesta no-streaming embebida en el stream: tómala tal cual.
+  if (choice.message && typeof choice.message.content === 'string' && choice.message.content) {
+    state.content += choice.message.content;
+    return choice.message.content;
+  }
   const delta = choice.delta;
   if (!delta) return '';
   for (const tc of delta.tool_calls ?? []) {
@@ -71,7 +85,21 @@ export function accumulateChunk(state: StreamState, j: unknown): string {
     state.content += delta.content;
     return delta.content;
   }
+  // Razonamiento: se acumula aparte (no se muestra como respuesta), pero sirve
+  // de RESPALDO cuando el modelo razona y no emite `content` — sin esto la
+  // burbuja quedaba vacía con gemma y compañía.
+  const think = delta.reasoning_content ?? delta.reasoning;
+  if (typeof think === 'string' && think) {
+    state.reasoning += think;
+    state.reasoningDelta = think;
+  }
   return '';
+}
+
+/** Final text of a turn: the content, or the reasoning if that's all we got. */
+export function finalText(state: StreamState): string {
+  if (state.content.trim()) return state.content;
+  return state.reasoning.trim();
 }
 
 export function finishedToolCalls(state: StreamState): ToolCall[] {
@@ -97,6 +125,8 @@ export interface AgentTurnOpts {
   onToolStart(name: string, argsJson: string): void;
   /** Fired when a transient failure (504, timeout…) triggers a retry. */
   onRetry?(info: string): void;
+  /** Fired while the model emits reasoning (chars so far) — keeps the UI alive. */
+  onReasoning?(chars: number): void;
   maxPerMinute?: number;
   throttleKey?: string;
   maxSteps?: number;
@@ -118,13 +148,26 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
     const res = await streamCall(opts, opts.onRetry);
     if ('error' in res) return res;
 
-    if (res.state.content) pieces.push(res.state.content);
+    // Si el modelo solo razonó (sin `content`), usamos el razonamiento: es
+    // preferible a devolver una burbuja vacía.
+    const turnText = finalText(res.state);
+    if (turnText) pieces.push(turnText);
     const toolCalls = finishedToolCalls(res.state);
 
     if (toolCalls.length === 0) {
       // Final answer: persist it in the thread so resumed sessions keep it.
-      opts.messages.push({ role: 'assistant', content: res.state.content || pieces.join('\n\n') });
-      return { text: pieces.join('\n\n') };
+      const answer = pieces.join('\n\n');
+      opts.messages.push({ role: 'assistant', content: answer });
+      // Nada de texto NI herramientas: el modelo se quedó mudo, dilo claro.
+      if (!answer.trim()) {
+        return {
+          error:
+            'el modelo terminó sin escribir nada. Suele pasar cuando no soporta herramientas (function calling): prueba con otro modelo de tu lista.',
+        };
+      }
+      // El texto ya se emitió por onDelta salvo que viniera solo en reasoning.
+      if (!res.state.content.trim() && res.state.reasoning.trim()) opts.onDelta(res.state.reasoning);
+      return { text: answer };
     }
 
     opts.messages.push({
@@ -297,8 +340,10 @@ async function readStream(
       }
       try {
         const j = JSON.parse(data);
+        state.reasoningDelta = undefined;
         const delta = accumulateChunk(state, j);
         if (delta) opts.onDelta(delta);
+        else if (state.reasoningDelta) opts.onReasoning?.(state.reasoning.length);
         if (state.error) return { error: state.error };
       } catch {
         // partial JSON across chunks — wait for more

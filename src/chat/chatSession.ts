@@ -980,7 +980,7 @@ export class ChatSession {
       } catch {
         return Promise.resolve('ERROR: argumentos inválidos.');
       }
-      if (name === 'web_search') return webSearch(String(a.query ?? ''), 8, a.recency ? String(a.recency) : undefined);
+      if (name === 'web_search') return webSearch(String(a.query ?? ''), 12, a.recency ? String(a.recency) : undefined);
       if (name === 'fetch_url') return fetchUrl(String(a.url ?? ''));
       if (name === 'deep_research')
         return deepResearch(
@@ -1095,7 +1095,8 @@ export class ChatSession {
           endpoint: oai.endpoint,
           provider: oai.provider,
         };
-        if (name === 'web_search') return webSearch(String(a.query ?? ''));
+        if (name === 'web_search')
+          return webSearch(String(a.query ?? ''), 12, a.recency ? String(a.recency) : undefined);
         if (name === 'fetch_url') return fetchUrl(String(a.url ?? ''));
         if (name === 'deep_research') return deepResearch(String(a.topic ?? ''), a.depth ? String(a.depth) : undefined);
         return generateImage(aiCtx, String(a.prompt ?? ''), a.model ? String(a.model) : undefined);
@@ -1135,6 +1136,13 @@ export class ChatSession {
       onRetry: (info) => {
         handlers.onStatus?.(info);
         handlers.onInfo(`⏳ ${info}`);
+      },
+      onReasoning: (chars) => {
+        const now = Date.now();
+        if (now - this.lastStatusAt > 400) {
+          this.lastStatusAt = now;
+          handlers.onStatus?.(`${oai.model} está razonando… (${chars.toLocaleString('es-DO')} caracteres)`);
+        }
       },
       maxPerMinute: cap,
       throttleKey: cap ? `${oai.provider}:${account.id}` : undefined,

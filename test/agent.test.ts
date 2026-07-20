@@ -268,3 +268,51 @@ test('parseAgentSession validates shape and id prefix', () => {
   assert.equal(parseAgentSession('{"id":"agent-x"}'), null); // no messages array
   assert.equal(parseAgentSession('no es json'), null);
 });
+
+// ---- modelos de razonamiento (gemma/glm/deepseek en NVIDIA NIM) ------------
+
+test('accumulateChunk guarda reasoning_content y finalText lo usa de respaldo', async () => {
+  const { finalText } = await import('../src/agent/agentLoop.js');
+  const st = newStreamState();
+  accumulateChunk(st, { choices: [{ delta: { reasoning_content: 'pienso… ' } }] });
+  accumulateChunk(st, { choices: [{ delta: { reasoning: 'sigo pensando' } }] });
+  assert.equal(st.content, '', 'el razonamiento NO es contenido');
+  assert.equal(st.reasoning, 'pienso… sigo pensando');
+  // Sin content, la respuesta es el razonamiento (antes salía burbuja vacía).
+  assert.equal(finalText(st), 'pienso… sigo pensando');
+  // Con content, manda el content.
+  accumulateChunk(st, { choices: [{ delta: { content: 'Hola!' } }] });
+  assert.equal(finalText(st), 'Hola!');
+});
+
+test('accumulateChunk acepta la respuesta completa en choices[].message', () => {
+  const st = newStreamState();
+  const out = accumulateChunk(st, { choices: [{ message: { content: 'respuesta directa' } }] });
+  assert.equal(out, 'respuesta directa');
+  assert.equal(st.content, 'respuesta directa');
+});
+
+test('runAgentTurn avisa cuando el modelo termina mudo en vez de devolver vacío', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response('data: {"choices":[{"finish_reason":"stop","delta":{}}]}\ndata: [DONE]\n', {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    })) as typeof fetch;
+  try {
+    const res = await runAgentTurn({
+      endpoint: 'https://x.test/v1',
+      apiKey: 'k',
+      model: 'google/gemma-4-31b-it',
+      messages: [{ role: 'user', content: 'Hola' }],
+      execute: async () => 'ok',
+      onDelta: () => {},
+      onToolStart: () => {},
+    });
+    assert.ok('error' in res);
+    assert.match((res as { error: string }).error, /terminó sin escribir nada/);
+    assert.match((res as { error: string }).error, /function calling/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

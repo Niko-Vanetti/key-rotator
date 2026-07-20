@@ -177,6 +177,12 @@ export function agentSystemPrompt(cwd: string, skillNames: string[] = [], resear
     '- ABRE la fuente con fetch_url para confirmar la FECHA del dato antes de afirmar que es lo más reciente. Un resultado sin fecha verificada no sirve como "lo último".',
     '- Contrasta al menos 2 fuentes cuando el dato sea "lo más reciente". Si hay conflicto, gana la de fecha más nueva y dilo.',
     '- Al reportar, di la fecha del dato ("según X, del 12 de junio de 2026"). Si no pudiste verificar la fecha, adviértelo en vez de afirmar.',
+    '',
+    'EXACTITUD DE DATOS (errores que NO se toleran):',
+    '- FECHAS: nunca escribas una fecha de memoria. Cada fecha concreta (lanzamiento, versión, evento) sale de una fuente que ABRISTE, y dices cuál. Si dos fuentes discrepan, cita ambas y quédate con la oficial (sitio o cuenta del propio artista/empresa, Wikipedia con referencia) — no con un blog.',
+    '- LISTAS ("las más recientes", "todas las X"): no las armes de memoria ni con fragmentos sueltos de búsqueda; abre una fuente que contenga la lista COMPLETA (discografía/changelog/catálogo oficial o su Wikipedia) y enumérala desde ahí. Antes de entregar, pregúntate: "¿esta fuente cubre todo el período que me piden?" Si solo tienes trozos, dilo: "puede faltar alguna, verifiqué solo estas fuentes".',
+    '- Si el usuario te corrige, NO te limites a añadir lo que dijo: vuelve a buscar la lista completa, porque si faltó una cosa probablemente falten más.',
+    '- Prefiere fuentes primarias u oficiales. Un dato que solo aparece en un agregador sin fecha no se afirma como cierto.',
     ...(research
       ? ['Para informes/comparativas usa deep_research(topic, depth, recency) y redacta el informe profesional citando [1],[2]… Si piden archivo, guárdalo (write_file .md, o .docx por PowerShell).']
       : []),
