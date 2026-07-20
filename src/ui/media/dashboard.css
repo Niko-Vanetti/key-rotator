@@ -92,6 +92,13 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vsco
   gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
 }
 .section-head .hint { opacity: 0.75; font-size: 12px; margin: 0; }
+.director-row { margin: 4px 0 14px; }
+.director-row select {
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+  padding: 5px 8px; border-radius: 4px; min-width: 240px;
+}
 .section-head button {
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #fff);

@@ -177,6 +177,7 @@
         const bold = b.querySelector('b');
         if (bold) bold.textContent = (on ? '● ' : '○ ') + bold.textContent.replace(/^[●○]\s*/, '');
       });
+      applyMode(mode);
       vscode.postMessage({ type: 'setMode', value: mode });
       closeMenus();
       return;
@@ -200,24 +201,16 @@
     });
   }
 
-  // Quién dirige la agencia: 'auto' (mejor disponible, prefiere Google) o uno fijo.
-  function renderDirectors(models, selected) {
-    const box = document.getElementById('directorList');
-    if (!box) return;
-    box.innerHTML = '';
-    const opts = [{ id: 'auto', label: 'Automático (el mejor disponible)' }].concat(
-      (models || []).map((m) => ({ id: m.model, label: m.model }))
-    );
-    opts.forEach((o) => {
-      const b = document.createElement('button');
-      const on = (selected || 'auto') === o.id;
-      b.className = 'menu-item' + (on ? ' active' : '');
-      b.textContent = (on ? '● ' : '○ ') + o.label;
-      b.addEventListener('click', () => {
-        vscode.postMessage({ type: 'setDirector', value: o.id });
-        renderDirectors(models, o.id);
-      });
-      box.appendChild(b);
+  // En modo agencia el modelo y el esfuerzo los decide el director: se
+  // bloquean los selectores para que no haya dos fuentes de verdad.
+  function applyMode(mode) {
+    const agency = mode === 'agency';
+    const ctl = document.getElementById('claudeControls');
+    if (ctl) ctl.classList.toggle('locked', agency);
+    [modelSelect, effortSelect].forEach((el) => {
+      if (!el) return;
+      el.disabled = agency;
+      el.title = agency ? 'En modo agencia lo decide el director (elígelo en Administrar modelos)' : '';
     });
   }
 
@@ -445,7 +438,7 @@
       case 'webControls': renderWebControls(msg); break;
       case 'webAttach': addAttachChip(msg.name, msg.path); break;
       case 'accounts': renderAccounts(msg.accounts); break;
-      case 'directors': renderDirectors(msg.models, msg.selected); break;
+      case 'mode': applyMode(msg.mode); break;
       case 'slash': slashCommands = msg.commands || []; break;
       case 'loading':
         showLoading(msg.title);

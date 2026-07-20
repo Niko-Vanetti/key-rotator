@@ -29,6 +29,9 @@ export interface DashboardCallbacks {
   deleteSkill(name: string): Promise<void>;
   editSkill(name: string): Promise<void>;
   syncSkillsFromClaude(): Promise<string>;
+  /** Agency director: 'auto' or a model id. */
+  getDirector(): string;
+  setDirector(value: string): Promise<void>;
 }
 
 interface IncomingMessage {
@@ -39,6 +42,7 @@ interface IncomingMessage {
   text?: string;
   label?: string;
   name?: string;
+  value?: string;
   account?: {
     label: string;
     apiKey: string;
@@ -83,7 +87,11 @@ export class DashboardPanel {
   }
 
   private postState(): void {
-    this.panel.webview.postMessage({ type: 'state', ...this.callbacks.getState() });
+    this.panel.webview.postMessage({
+      type: 'state',
+      ...this.callbacks.getState(),
+      director: this.callbacks.getDirector(),
+    });
     this.panel.webview.postMessage({ type: 'mcpState', servers: this.callbacks.listMcp() });
     this.panel.webview.postMessage({ type: 'skillState', skills: this.callbacks.listSkills() });
   }
@@ -136,6 +144,10 @@ export class DashboardPanel {
         this.panel.webview.postMessage({ type: 'detection', result });
         break;
       }
+      case 'setDirector':
+        await this.callbacks.setDirector(msg.value ?? 'auto');
+        this.postState();
+        break;
       // ----- MCP -----
       case 'addMcp': {
         if (!msg.text) return;

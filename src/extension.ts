@@ -344,6 +344,20 @@ export function activate(context: vscode.ExtensionContext) {
     // Un pegado → cuenta lista (mismo motor que el comando 'Pegar código').
     addFromSnippet: (text: string, label?: string) => addAccountFromText(text, label),
 
+    // ----- Director de la agencia -----
+    getDirector: () =>
+      vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto') || 'auto',
+    setDirector: async (value: string) => {
+      await vscode.workspace
+        .getConfiguration('keyRotator')
+        .update('agencyDirector', value || 'auto', vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage(
+        value && value !== 'auto'
+          ? `KeyRotator: ${value} dirigirá la agencia.`
+          : 'KeyRotator: director automático (el mejor disponible).'
+      );
+    },
+
     // ----- MCP (config propia de KeyRotator) -----
     listMcp: () =>
       Object.entries(readKrMcp()).map(([name, cfg]) => ({

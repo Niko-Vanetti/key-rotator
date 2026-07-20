@@ -220,11 +220,7 @@ export class ChatPanel {
         this.post(this.metaMsg(this.session.currentSessionId));
         this.post({ type: 'config', effort });
         this.post({ type: 'accounts', accounts: this.accountsForMenu() });
-        this.post({
-          type: 'directors',
-          models: this.backend.listApiAccountModels?.() ?? [],
-          selected: vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto'),
-        });
+        this.post({ type: 'mode', mode: this.session.currentMode });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
         this.postModels();
         this.postWebControls();
@@ -293,27 +289,18 @@ export class ChatPanel {
       case 'stop':
         this.session.stop();
         break;
-      case 'setDirector': {
-        const v = (msg.value ?? 'auto').trim() || 'auto';
-        await vscode.workspace
-          .getConfiguration('keyRotator')
-          .update('agencyDirector', v, vscode.ConfigurationTarget.Global);
-        this.post({
-          type: 'info',
-          text: v === 'auto' ? '🎩 Director: automático (el mejor disponible).' : `🎩 Director de la agencia: ${v}`,
-        });
-        break;
-      }
       case 'setMode': {
         const mode = msg.value === 'agency' ? 'agency' : 'individual';
         this.session.setMode(mode);
+        const director = vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto');
         this.post({
           type: 'info',
           text:
             mode === 'agency'
-              ? '🏢 Modo agencia activado: un director repartirá el trabajo entre todos tus modelos en paralelo.'
+              ? `🏢 Modo agencia activado. Director: ${director === 'auto' ? 'automático (el mejor disponible)' : director}. El modelo y el esfuerzo los decide la agencia — cambia el director en "Administrar modelos".`
               : '👤 Modo individual: responde solo el modelo elegido abajo.',
         });
+        this.post({ type: 'mode', mode });
         this.post(this.metaMsg(this.session.currentSessionId));
         break;
       }

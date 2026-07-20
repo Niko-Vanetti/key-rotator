@@ -113,6 +113,27 @@ function renderStats(stats, accounts, history) {
   stableContainer.innerHTML = `<div>${best.label} (${best.provider}) — ${awayCounts[best.id]} rate limit(s) reportado(s)</div>`;
 }
 
+// ---------- Director de la agencia ----------
+function renderDirector(accounts, selected) {
+  const sel = document.getElementById('directorSelect');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const opts = [{ id: 'auto', label: 'Automático (el mejor disponible)' }].concat(
+    (accounts || []).map((a) => ({ id: a.label, label: a.label }))
+  );
+  for (const o of opts) {
+    const el = document.createElement('option');
+    el.value = o.id;
+    el.textContent = o.label;
+    sel.appendChild(el);
+  }
+  sel.value = selected || 'auto';
+}
+{
+  const sel = document.getElementById('directorSelect');
+  if (sel) sel.addEventListener('change', () => vscode.postMessage({ type: 'setDirector', value: sel.value }));
+}
+
 // ---------- MCP + Skills ----------
 function renderList(containerId, items, kind) {
   const box = document.getElementById(containerId);
@@ -164,6 +185,7 @@ window.addEventListener('message', (event) => {
   switch (msg.type) {
     case 'state':
       renderAccounts(msg.accounts);
+      renderDirector(msg.accounts, msg.director);
       renderHistory(msg.history);
       renderStats(msg.stats, msg.accounts, msg.history);
       break;
