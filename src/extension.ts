@@ -1146,6 +1146,25 @@ export function activate(context: vscode.ExtensionContext) {
         return 'deny' as const; // Cancelar / cerrar el diálogo = denegar
       },
       store: agentStore,
+      // Plantilla de la agencia: un modelo por API key utilizable.
+      roster: async () => {
+        const metas = keyManager.getAllMeta().filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled');
+        const out = [];
+        for (const meta of metas) {
+          const model = openAIModel(meta);
+          const apiKey = await keyManager.getApiKey(meta.id);
+          if (!model || !apiKey) continue;
+          out.push({
+            accountId: meta.id,
+            model,
+            apiKey,
+            endpoint: openAIEndpoint(meta),
+            provider: meta.provider,
+            params: getOaiParams(meta.id),
+          });
+        }
+        return out;
+      },
       // Biblioteca propia primero; si está vacía, las skills de Claude.
       skillNames: () => {
         const own = listSkillNames([krSkillsDir]);
@@ -1157,8 +1176,16 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   const activeChatAccountLabel = (): string => {
+    // Herramienta NVIDIA/OpenRouter: la etiqueta es el modelo activo (la
+    // cuenta preferida, o la primera de la lista alfabética).
+    const api = keyManager.getAllMeta().filter((a) => isOpenAIProvider(a.provider));
+    if (api.length > 0) {
+      const pref = getPreferredId();
+      const meta = api.find((a) => a.id === pref) ?? [...api].sort((x, y) => x.label.localeCompare(y.label))[0];
+      return openAIModel(meta) || meta.label;
+    }
     if (getChatMode() === 'full') return 'Claude (tu login)';
-    return sortedActiveAnthropic()[0]?.label ?? 'Sin cuenta activa';
+    return sortedActiveAnthropic()[0]?.label ?? 'Sin modelos — pega tu código de NVIDIA Build';
   };
 
   /** Swap an account's priority with its neighbor (dir -1 = up, +1 = down). */

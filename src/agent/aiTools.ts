@@ -90,18 +90,44 @@ export async function fetchUrl(url: string): Promise<string> {
   }
 }
 
-export async function webSearch(query: string, limit = 8): Promise<string> {
+/** DuckDuckGo's date filter (df) for a recency word (pure, tested). */
+export function recencyParam(recency?: string): string {
+  const r = (recency ?? '').toLowerCase();
+  if (/dia|día|day|hoy|24h/.test(r)) return 'd';
+  if (/semana|week/.test(r)) return 'w';
+  if (/mes|month/.test(r)) return 'm';
+  if (/año|ano|year/.test(r)) return 'y';
+  return '';
+}
+
+/**
+ * Web search. `recency` ('dia'|'semana'|'mes'|'año') applies the engine's date
+ * filter — essential for "latest/most recent X" questions, where undated
+ * results are usually stale.
+ */
+export async function webSearch(query: string, limit = 8, recency?: string): Promise<string> {
   const q = query.trim();
   if (!q) return 'ERROR: consulta vacía.';
+  const df = recencyParam(recency);
   try {
-    const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), {
+    const url =
+      'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q) + (df ? `&df=${df}` : '');
+    const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (KeyRotator agent)' },
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return `ERROR: el buscador devolvió HTTP ${res.status}`;
-    const results = parseDuckResults(await res.text(), limit);
+    let results = parseDuckResults(await res.text(), limit);
+    if (results.length === 0 && df) {
+      // Nothing in that window — retry without the filter and say so.
+      const wide = await webSearch(q, limit);
+      return `Sin resultados en la ventana "${recency}". Resultados generales (verifica fechas):\n\n${wide}`;
+    }
     if (results.length === 0) return `Sin resultados para "${q}".`;
-    return results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n\n');
+    const header = df
+      ? `Resultados filtrados a: último ${recency}. Hoy es ${new Date().toISOString().slice(0, 10)}.\n\n`
+      : `Hoy es ${new Date().toISOString().slice(0, 10)}. OJO: estos resultados pueden ser antiguos — confirma la fecha antes de afirmar que algo es "lo más reciente".\n\n`;
+    return header + results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n\n');
   } catch (e) {
     return `ERROR de búsqueda: ${(e as Error).message}`;
   }
@@ -174,11 +200,11 @@ export function sourcesForDepth(depth?: string): number {
  * numbered notes with citations. The model turns these into the final report
  * (and can save it with write_file).
  */
-export async function deepResearch(topic: string, depth?: string): Promise<string> {
+export async function deepResearch(topic: string, depth?: string, recency?: string): Promise<string> {
   const t = topic.trim();
   if (!t) return 'ERROR: tema vacío.';
   const want = sourcesForDepth(depth);
-  const searchOut = await webSearch(t, want + 4);
+  const searchOut = await webSearch(t, want + 4, recency);
   if (searchOut.startsWith('ERROR') || searchOut.startsWith('Sin resultados')) return searchOut;
 
   const urls = [...searchOut.matchAll(/^\s+(https?:\/\/\S+)$/gm)].map((m) => m[1]).slice(0, want);
@@ -204,7 +230,7 @@ export async function deepResearch(topic: string, depth?: string): Promise<strin
     'CONTENIDO DE LAS FUENTES:',
     notes,
     '',
-    'INSTRUCCIÓN: redacta ahora un informe profesional en español con: resumen ejecutivo, hallazgos organizados por tema, datos concretos, limitaciones, y una sección de Fuentes con las URLs numeradas [1], [2]… Cita [n] en el texto. Si el usuario pidió un archivo, guárdalo con write_file (.md) o genera .docx con PowerShell.',
+    `INSTRUCCIÓN: hoy es ${new Date().toISOString().slice(0, 10)}. Redacta un informe profesional en español con: resumen ejecutivo, hallazgos organizados por tema, datos concretos CON SU FECHA, limitaciones, y una sección de Fuentes con las URLs numeradas [1], [2]… Cita [n] en el texto. Descarta o marca como dudoso todo dato del que no puedas establecer la fecha, y prioriza siempre lo más reciente. Si el usuario pidió un archivo, guárdalo con write_file (.md) o genera .docx con PowerShell.`,
   ].join('\n');
 }
 

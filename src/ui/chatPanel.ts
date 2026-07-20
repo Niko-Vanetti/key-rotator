@@ -8,6 +8,7 @@ interface IncomingMessage {
   id?: string;
   value?: string;
   on?: boolean;
+  paths?: string[];
 }
 
 /**
@@ -93,9 +94,12 @@ export class ChatPanel {
   }
 
   private currentAccountLabel(): string {
+    if (this.session.currentMode === 'agency') return '🏢 Modo agencia';
     if (this.accountId) {
       const acc = this.backend.listChatAccounts().find((a) => a.id === this.accountId);
       if (acc) return acc.label;
+      const api = this.backend.listApiAccountModels?.().find((m) => m.accountId === this.accountId);
+      if (api) return api.model;
     }
     return this.activeAccountLabel();
   }
@@ -284,6 +288,19 @@ export class ChatPanel {
       case 'stop':
         this.session.stop();
         break;
+      case 'setMode': {
+        const mode = msg.value === 'agency' ? 'agency' : 'individual';
+        this.session.setMode(mode);
+        this.post({
+          type: 'info',
+          text:
+            mode === 'agency'
+              ? '🏢 Modo agencia activado: un director repartirá el trabajo entre todos tus modelos en paralelo.'
+              : '👤 Modo individual: responde solo el modelo elegido abajo.',
+        });
+        this.post(this.metaMsg(this.session.currentSessionId));
+        break;
+      }
       case 'addAccount':
         await vscode.commands.executeCommand('keyRotator.addAccount');
         break;
@@ -316,6 +333,33 @@ export class ChatPanel {
         } else {
           // Claude CLI: reference the path with @ so it reads the file.
           this.post({ type: 'insert', text: picked.map((u) => `@${u.fsPath} `).join('') });
+        }
+        break;
+      }
+      // ----- arrastrar y soltar sobre el chat -----
+      case 'dropFiles': {
+        const paths = (msg.paths ?? [])
+          .map((p) => {
+            try {
+              return p.startsWith('file:') ? vscode.Uri.parse(p).fsPath : p;
+            } catch {
+              return p;
+            }
+          })
+          .filter((p) => {
+            try {
+              return fs.statSync(p).isFile();
+            } catch {
+              return false;
+            }
+          });
+        if (paths.length === 0) {
+          this.post({ type: 'info', text: 'No pude resolver la ruta de lo soltado (¿era una carpeta?).' });
+          break;
+        }
+        for (const p of paths) {
+          this.pendingWebFiles.push(p);
+          this.post({ type: 'webAttach', name: p.split(/[\\/]/).pop(), path: p });
         }
         break;
       }

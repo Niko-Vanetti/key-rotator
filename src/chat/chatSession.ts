@@ -13,6 +13,15 @@ import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
 import { runAgentTurn, type ContentPart } from '../agent/agentLoop.js';
 import { AGENT_TOOLS, executeTool, agentSystemPrompt, readSkill } from '../agent/tools.js';
 import { webSearch, fetchUrl, generateImage, deepResearch, imageToDataUrl, isImageFile } from '../agent/aiTools.js';
+import {
+  pickDirector,
+  extractJson,
+  normalizePlan,
+  resolveNames,
+  directorResearchPrompt,
+  directorSynthesisPrompt,
+  type AgencyModel,
+} from '../agent/agency.js';
 import { PermissionGate, type PermAnswer, type PermCategory } from '../agent/permissions.js';
 import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore } from '../agent/agentStore.js';
 
@@ -122,6 +131,8 @@ export interface AgentBackendContext {
   promptPermission(message: string, category: PermCategory): Promise<PermAnswer | undefined>;
   /** The agent's own session store (separate from the Claude store). */
   store: AgentStore;
+  /** Every usable model (one per API key) — the agency's roster. */
+  roster(): Promise<AgencyModel[]>;
   /** Names of the available skills, for the system prompt. */
   skillNames(): string[];
   /** Directories to resolve a skill's markdown from (most specific first). */
@@ -172,6 +183,8 @@ export class ChatSession {
   private agentGate: PermissionGate | null = null;
   /** Aborts the in-flight turn (the chat's "Detener" button). */
   private abort: AbortController | null = null;
+  /** 'agency' = a director model plans and runs the others in parallel. */
+  private mode: 'individual' | 'agency' = 'individual';
 
   constructor(private backend: ChatBackend) {}
 
@@ -226,6 +239,15 @@ export class ChatSession {
     this.abort?.abort();
   }
 
+  /** Individual (one model) vs agency (a director orchestrates all of them). */
+  setMode(mode: 'individual' | 'agency'): void {
+    this.mode = mode;
+  }
+
+  get currentMode(): 'individual' | 'agency' {
+    return this.mode;
+  }
+
   /** Reset so the next message starts a brand-new claude session. */
   reset(): void {
     this.sessionId = null;
@@ -278,7 +300,8 @@ export class ChatSession {
 
       // NVIDIA Build / OpenRouter → the file/command AGENT loop (tools).
       if (account.openai && AGENT_PROVIDERS.has(account.openai.provider)) {
-        await this.runAgentTurnFor(text, account, handlers, attachments);
+        if (this.mode === 'agency') await this.runAgencyTurn(text, account, handlers, attachments);
+        else await this.runAgentTurnFor(text, account, handlers, attachments);
         return;
       }
 
@@ -355,6 +378,237 @@ export class ChatSession {
    * NVIDIA Build's free tier is 40 rpm; stay a few under it as margin.
    */
   private static readonly RPM_CAPS: Record<string, number> = { nvidia: 35 };
+
+  /**
+   * MODO AGENCIA: el director (mejor modelo disponible) planifica qué modelo
+   * hace cada parte, los trabajadores corren EN PARALELO con todas las
+   * herramientas, y el director sintetiza la entrega final.
+   */
+  private async runAgencyTurn(
+    text: string,
+    account: ActiveAccount,
+    handlers: TurnHandlers,
+    attachments?: string[]
+  ): Promise<void> {
+    const ctx = this.backend.getAgentContext?.();
+    if (!ctx) {
+      handlers.onError('El agente no está disponible en este entorno.');
+      return;
+    }
+    const roster = await ctx.roster();
+    if (roster.length === 0) {
+      handlers.onError('No hay modelos configurados. Pega el código de build.nvidia.com para agregar al menos uno.');
+      return;
+    }
+    if (!this.agentSession) {
+      this.agentSession = newAgentSession(account.id, roster[0].provider, 'agencia', ctx.defaultCwd());
+    }
+    if (!this.agentGate) this.agentGate = new PermissionGate((m, c) => ctx.promptPermission(m, c));
+    const s = this.agentSession;
+    const gate = this.agentGate;
+    s.messages.push({ role: 'user', content: text });
+
+    const director = pickDirector(roster)!;
+    handlers.onModel(`agencia · director ${director.model}`);
+    handlers.onInfo(`🏢 Modo agencia — director: ${director.model} · equipo: ${roster.length} modelo(s)`);
+
+    // Un solo modelo: no hay nada que repartir, trabaja directo.
+    const runOne = (m: AgencyModel, prompt: string, sys: string) =>
+      runAgentTurn({
+        endpoint: m.endpoint,
+        apiKey: m.apiKey,
+        model: m.model,
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: prompt },
+        ],
+        tools: this.agencyTools(),
+        execute: (n, a) => this.agencyExecute(n, a, s, gate, m, ctx),
+        onDelta: () => {},
+        onToolStart: (n) => handlers.onInfo(`   🔧 ${m.model}: ${n}`),
+        maxPerMinute: ChatSession.RPM_CAPS[m.provider],
+        throttleKey: ChatSession.RPM_CAPS[m.provider] ? `${m.provider}:${m.accountId}` : undefined,
+        params: m.params,
+        signal: this.abort?.signal,
+        maxSteps: 15,
+      });
+
+    // 1) INVESTIGAR + PLANIFICAR (el director usa la web de verdad y valida
+    //    qué tan reciente es cada evidencia antes de repartir).
+    handlers.onInfo('🔎 Etapa 1 — investigando qué modelo rinde mejor en cada parte (con evidencia reciente)…');
+    const today = new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' });
+    const planRes = await runOne(
+      director,
+      directorResearchPrompt(text, roster, today),
+      `${agentSystemPrompt(s.cwd, ctx.skillNames())}\n\nEres el director de la agencia. Investiga con tus herramientas ANTES de decidir y termina respondiendo SOLO el JSON pedido, sin texto alrededor.`
+    );
+    if (this.abort?.signal.aborted) {
+      handlers.onInfo('⏹ Detenido por ti.');
+      handlers.onDone('');
+      return;
+    }
+    if ('error' in planRes) {
+      handlers.onError(`El director (${director.model}) falló al planificar: ${planRes.error}`);
+      return;
+    }
+    const plan = normalizePlan(extractJson(planRes.text), roster);
+    if (!plan) {
+      // El director no dio un plan usable → que trabaje él solo, sin fallar.
+      handlers.onInfo('⚠ El director no devolvió un plan válido; ejecuto la tarea con él directamente.');
+      await this.runAgentTurnFor(text, account, handlers, attachments);
+      return;
+    }
+    if (plan.strategy) handlers.onInfo(`🧭 Estrategia: ${plan.strategy}`);
+    handlers.onInfo(
+      `👥 Equipo asignado:\n${plan.assignments.map((a) => `   • ${a.role} → ${a.model}`).join('\n')}`
+    );
+
+    // 2) PREPARAR EL ENTORNO: cargar las skills que el director pidió y avisar
+    //    qué MCP hay disponibles, para que los trabajadores lleguen listos.
+    let envBrief = '';
+    const skillsWanted = resolveNames(plan.skills, ctx.skillNames());
+    if (skillsWanted.length > 0) {
+      handlers.onInfo(`🧰 Etapa 2 — preparando el entorno: cargando skills ${skillsWanted.join(', ')}`);
+      const loaded = skillsWanted
+        .map((n) => {
+          const body = readSkill(n, ctx.skillRoots());
+          return body.startsWith('ERROR') ? null : `### SKILL: ${n}\n${body.slice(0, 6000)}`;
+        })
+        .filter(Boolean);
+      if (loaded.length) envBrief += `\n\nMETODOLOGÍAS OBLIGATORIAS PARA ESTE TRABAJO:\n${loaded.join('\n\n')}`;
+    }
+    let mcpNames: string[] = [];
+    try {
+      mcpNames = (await ctx.mcpTools()).map((t) => (t.def as { function: { name: string } }).function.name);
+    } catch {
+      mcpNames = [];
+    }
+    if (mcpNames.length) {
+      handlers.onInfo(`🔌 Integraciones MCP disponibles para el equipo: ${mcpNames.length}`);
+    }
+    // Recomendaciones de modelos que el usuario NO tiene (nunca se instalan solas).
+    if (plan.recommendations && plan.recommendations.length > 0) {
+      handlers.onInfo(
+        '💡 El director recomienda añadir estos modelos de build.nvidia.com (pega su código en KeyRotator y avísame en el chat para usarlos):\n' +
+          plan.recommendations.map((r) => `   • ${r.model} — ${r.reason}`).join('\n')
+      );
+    }
+
+    // 3) TRABAJAR EN PARALELO
+    const workerSys = (role: string) =>
+      `${agentSystemPrompt(s.cwd, ctx.skillNames())}\n\nTrabajas como "${role}" dentro de una agencia. Haz TU parte completa y entrega el resultado final de tu parte, listo para integrarse. No preguntes nada: si falta un dato, decídelo con tu mejor criterio y sigue.${envBrief}`;
+    const started = Date.now();
+    const outputs = await Promise.all(
+      plan.assignments.map(async (a) => {
+        const m = roster.find((r) => r.model === a.model)!;
+        const r = await runOne(m, a.task, workerSys(a.role));
+        const output = 'error' in r ? `(falló: ${r.error})` : r.text;
+        handlers.onInfo(`   ✅ ${a.role} (${a.model}) entregó ${output.length} caracteres`);
+        return { role: a.role, model: a.model, output };
+      })
+    );
+    if (this.abort?.signal.aborted) {
+      handlers.onInfo('⏹ Detenido por ti.');
+      handlers.onDone('');
+      return;
+    }
+    const usable = outputs.filter((o) => !o.output.startsWith('(falló:'));
+    if (usable.length === 0) {
+      handlers.onError(`Ningún especialista pudo completar su parte:\n${outputs.map((o) => `• ${o.model}: ${o.output}`).join('\n')}`);
+      return;
+    }
+    handlers.onInfo(`⏱ Trabajo en paralelo terminado en ${Math.round((Date.now() - started) / 1000)}s. Integrando…`);
+
+    // 4) SINTETIZAR (esta sí se transmite al usuario)
+    const finalRes = await runAgentTurn({
+      endpoint: director.endpoint,
+      apiKey: director.apiKey,
+      model: director.model,
+      messages: [
+        { role: 'system', content: agentSystemPrompt(s.cwd, ctx.skillNames()) },
+        { role: 'user', content: directorSynthesisPrompt(text, usable) },
+      ],
+      tools: this.agencyTools(),
+      execute: (n, a) => this.agencyExecute(n, a, s, gate, director, ctx),
+      onDelta: (t) => handlers.onDelta(t),
+      onToolStart: (n) => handlers.onInfo(`🔧 director: ${n}`),
+      maxPerMinute: ChatSession.RPM_CAPS[director.provider],
+      throttleKey: ChatSession.RPM_CAPS[director.provider] ? `${director.provider}:${director.accountId}` : undefined,
+      params: director.params,
+      signal: this.abort?.signal,
+    });
+    const finalText = 'error' in finalRes ? '' : finalRes.text;
+    s.messages.push({ role: 'assistant', content: finalText || '(sin síntesis)' });
+    try {
+      ctx.store.save(s);
+    } catch {
+      // best-effort
+    }
+    if ('error' in finalRes) {
+      handlers.onError(`El director falló al integrar: ${finalRes.error}`);
+      return;
+    }
+    handlers.onDone(finalText);
+  }
+
+  /** Tool set for agency workers (same built-ins; MCP stays in individual mode). */
+  private agencyTools(): unknown[] {
+    return AGENT_TOOLS;
+  }
+
+  /** Tool execution for an agency worker, bound to its own account/key. */
+  private agencyExecute(
+    name: string,
+    args: string,
+    s: AgentSession,
+    gate: PermissionGate,
+    m: AgencyModel,
+    ctx: AgentBackendContext
+  ): Promise<string> {
+    if (name === 'search_chats') {
+      try {
+        return Promise.resolve(ctx.store.search(String(JSON.parse(args || '{}').query ?? '')));
+      } catch {
+        return Promise.resolve('ERROR: query inválida.');
+      }
+    }
+    if (name === 'read_chat') {
+      try {
+        return Promise.resolve(ctx.store.transcript(String(JSON.parse(args || '{}').id ?? '')));
+      } catch {
+        return Promise.resolve('ERROR: id inválido.');
+      }
+    }
+    if (name === 'use_skill') {
+      try {
+        return Promise.resolve(readSkill(String(JSON.parse(args || '{}').name ?? ''), ctx.skillRoots()));
+      } catch {
+        return Promise.resolve('ERROR: nombre de skill inválido.');
+      }
+    }
+    if (name === 'web_search' || name === 'fetch_url' || name === 'generate_image' || name === 'deep_research') {
+      let a: Record<string, unknown> = {};
+      try {
+        a = JSON.parse(args || '{}');
+      } catch {
+        return Promise.resolve('ERROR: argumentos inválidos.');
+      }
+      if (name === 'web_search') return webSearch(String(a.query ?? ''), 8, a.recency ? String(a.recency) : undefined);
+      if (name === 'fetch_url') return fetchUrl(String(a.url ?? ''));
+      if (name === 'deep_research')
+        return deepResearch(
+          String(a.topic ?? ''),
+          a.depth ? String(a.depth) : undefined,
+          a.recency ? String(a.recency) : undefined
+        );
+      return generateImage(
+        { getCwd: () => s.cwd, apiKey: m.apiKey, endpoint: m.endpoint, provider: m.provider },
+        String(a.prompt ?? ''),
+        a.model ? String(a.model) : undefined
+      );
+    }
+    return executeTool(name, args, { getCwd: () => s.cwd, setCwd: (d) => (s.cwd = d), gate });
+  }
 
   /** Serve a turn of the file/command agent (NVIDIA Build / OpenRouter). */
   private async runAgentTurnFor(

@@ -167,7 +167,21 @@
   acctBtn.addEventListener('click', (e) => { e.stopPropagation(); plusMenu.classList.add('hidden'); acctMenu.classList.toggle('hidden'); });
   plusBtn.addEventListener('click', (e) => { e.stopPropagation(); acctMenu.classList.add('hidden'); plusMenu.classList.toggle('hidden'); });
   acctMenu.addEventListener('click', (e) => {
-    const act = e.target.getAttribute && e.target.getAttribute('data-act');
+    const item = e.target.closest ? e.target.closest('[data-act],[data-mode]') : null;
+    if (!item) return;
+    const mode = item.getAttribute('data-mode');
+    if (mode) {
+      acctMenu.querySelectorAll('.mode-item').forEach((b) => {
+        const on = b.getAttribute('data-mode') === mode;
+        b.classList.toggle('active', on);
+        const bold = b.querySelector('b');
+        if (bold) bold.textContent = (on ? '● ' : '○ ') + bold.textContent.replace(/^[●○]\s*/, '');
+      });
+      vscode.postMessage({ type: 'setMode', value: mode });
+      closeMenus();
+      return;
+    }
+    const act = item.getAttribute('data-act');
     if (act) { vscode.postMessage({ type: act }); closeMenus(); }
   });
   plusMenu.addEventListener('click', (e) => {
@@ -300,6 +314,49 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
   sendBtn.addEventListener('click', () => (sending ? stop() : send()));
+
+  // ---------- arrastrar y soltar archivos sobre el chat ----------
+  // VS Code entrega rutas por 'text/uri-list' (explorador u SO); File.path es
+  // el respaldo. El host convierte las URIs a rutas reales y las adjunta.
+  const dropZone = document.body;
+  ['dragenter', 'dragover'].forEach((ev) =>
+    dropZone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.add('dropping');
+    })
+  );
+  ['dragleave', 'drop'].forEach((ev) =>
+    dropZone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (ev === 'dragleave' && e.relatedTarget) return; // sigue dentro
+      dropZone.classList.remove('dropping');
+    })
+  );
+  dropZone.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    const items = [];
+    const uriList = dt.getData('text/uri-list') || dt.getData('resourceurls') || '';
+    if (uriList) {
+      // 'resourceurls' llega como JSON array de strings
+      try {
+        const arr = JSON.parse(uriList);
+        if (Array.isArray(arr)) arr.forEach((u) => items.push(String(u)));
+      } catch {
+        uriList.split(/\r?\n/).forEach((u) => { if (u && !u.startsWith('#')) items.push(u.trim()); });
+      }
+    }
+    if (items.length === 0 && dt.files && dt.files.length) {
+      for (const f of dt.files) if (f.path) items.push(f.path);
+    }
+    if (items.length === 0) {
+      addNotice('info', 'No pude leer la ruta del archivo soltado. Usa el botón ＋ para adjuntarlo.');
+      return;
+    }
+    vscode.postMessage({ type: 'dropFiles', paths: items });
+  });
   modelSelect.addEventListener('change', () => vscode.postMessage({ type: 'setModel', value: modelSelect.value }));
   effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));
   webModelSelect.addEventListener('change', () => {

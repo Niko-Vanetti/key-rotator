@@ -165,6 +165,12 @@ body {
 .queue-chip button { background: none; border: none; color: inherit; cursor: pointer; opacity: 0.7; }
 .queue-chip button:hover { opacity: 1; }
 #sendBtn.stopping { background: var(--vscode-inputValidation-errorBackground, #6d2b2b); }
+body.dropping { outline: 2px dashed var(--vscode-focusBorder, #007fd4); outline-offset: -4px; }
+
+/* ---------- Selector de modo (individual / agencia) ---------- */
+.mode-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 12px; }
+.mode-item small { opacity: 0.7; font-size: 10.5px; line-height: 1.35; white-space: normal; }
+.mode-item.active { background: var(--vscode-list-activeSelectionBackground, #04395e); }
 
 /* ---------- Slash autocomplete ---------- */
 .slash-menu {

@@ -17,8 +17,13 @@
       <div class="acct-wrap">
         <button id="acctBtn" class="acct-btn"><span id="activeAccount">—</span> ▾</button>
         <div id="acctMenu" class="menu hidden">
-          <div class="menu-label">Modelo</div>
-          <div id="acctList"></div>
+          <div class="menu-label">Modo de trabajo</div>
+          <button class="menu-item mode-item active" data-mode="individual">
+            <b>● Modo individual</b><small>Un solo modelo — el que elijas abajo a la izquierda.</small>
+          </button>
+          <button class="menu-item mode-item" data-mode="agency">
+            <b>○ Modo agencia</b><small>Un director investiga qué modelo sirve para cada parte, los pone a trabajar en paralelo e integra el resultado.</small>
+          </button>
           <div class="menu-sep"></div>
           <button class="menu-item" data-act="pasteSnippet">＋ Agregar modelo (pegar código)</button>
           <button class="menu-item" data-act="openDashboard">▦ Administrar modelos</button>
