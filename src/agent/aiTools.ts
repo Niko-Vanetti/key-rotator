@@ -322,6 +322,118 @@ export async function pingModel(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Analizador de viabilidad: ¿vale la pena usar este modelo?
+// Nace de lo aprendido en esta cuenta real: gemma-4-31b-it a veces no
+// responde nunca, deepseek-v4-pro dio un 404 intermitente, y algunos modelos
+// de NIM no soportan function calling (necesario para el agente).
+// ---------------------------------------------------------------------------
+
+export interface ViabilityFacts {
+  attempts: number;
+  successes: number;
+  /** Tiempo del primer intento que respondió, o null si ninguno lo hizo. */
+  latencyMs: number | null;
+  /** null = no se pudo probar (el modelo ni respondía a lo básico). */
+  supportsTools: boolean | null;
+}
+
+export type ViabilityVerdict = 'recomendado' | 'usable' | 'no-viable';
+
+export interface ViabilityReport extends ViabilityFacts {
+  verdict: ViabilityVerdict;
+  reasons: string[];
+}
+
+const SLOW_MS = 15_000;
+const VERY_SLOW_MS = 40_000;
+
+/** Decide el veredicto a partir de hechos ya medidos (pura, sin red — tested). */
+export function judgeViability(facts: ViabilityFacts): { verdict: ViabilityVerdict; reasons: string[] } {
+  if (facts.successes === 0) {
+    return {
+      verdict: 'no-viable',
+      reasons: [
+        facts.attempts > 1
+          ? `no respondió ninguna de las ${facts.attempts} veces que se probó — está caído o no disponible para tu cuenta`
+          : 'no respondió — está caído o no disponible para tu cuenta',
+      ],
+    };
+  }
+
+  const reasons: string[] = [];
+  if (facts.attempts > 1 && facts.successes < facts.attempts) {
+    reasons.push(`inconsistente: solo respondió ${facts.successes}/${facts.attempts} veces (puede fallarte a mitad de una tarea)`);
+  }
+  if (facts.latencyMs != null && facts.latencyMs > VERY_SLOW_MS) {
+    reasons.push(`muy lento: ${(facts.latencyMs / 1000).toFixed(0)}s en el primer texto`);
+  } else if (facts.latencyMs != null && facts.latencyMs > SLOW_MS) {
+    reasons.push(`algo lento: ${(facts.latencyMs / 1000).toFixed(0)}s en el primer texto`);
+  }
+  if (facts.supportsTools === false) {
+    reasons.push('no soporta herramientas (function calling) — en Modo agente no podrá leer/escribir archivos, buscar en la web, etc.');
+  }
+
+  if (reasons.length === 0) {
+    return {
+      verdict: 'recomendado',
+      reasons: [`responde rápido (${facts.latencyMs != null ? (facts.latencyMs / 1000).toFixed(1) + 's' : '?'}) y soporta herramientas`],
+    };
+  }
+  return { verdict: 'usable', reasons };
+}
+
+/** ¿El modelo de verdad invoca una función cuando se le pide? (no solo la anuncia en texto). */
+export async function pingToolCalling(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  timeoutMs = 30_000
+): Promise<boolean> {
+  try {
+    const res = await fetch(endpoint.replace(/\/+$/, '') + '/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'Llama ahora a la función "ping". No respondas texto, solo invócala.' }],
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'ping', description: 'Responde pong.', parameters: { type: 'object', properties: {} } },
+          },
+        ],
+        max_tokens: 100,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return false;
+    const j = (await res.json()) as { choices?: { message?: { tool_calls?: unknown[] } }[] };
+    const calls = j.choices?.[0]?.message?.tool_calls;
+    return Array.isArray(calls) && calls.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Prueba real y completa: pega 2 veces (consistencia + latencia) y, si
+ * respondió, comprueba si sabe usar herramientas. 3 peticiones como mucho.
+ */
+export async function analyzeViability(endpoint: string, apiKey: string, model: string): Promise<ViabilityReport> {
+  const p1 = await pingModel(endpoint, apiKey, model);
+  const p2 = await pingModel(endpoint, apiKey, model);
+  const successes = [p1, p2].filter((p) => p.ok).length;
+  const latencyMs = p1.ok ? p1.ms : p2.ok ? p2.ms : null;
+
+  const supportsTools = successes > 0 ? await pingToolCalling(endpoint, apiKey, model) : null;
+
+  const facts: ViabilityFacts = { attempts: 2, successes, latencyMs, supportsTools };
+  const { verdict, reasons } = judgeViability(facts);
+  return { ...facts, verdict, reasons };
+}
+
 /** Ranks available model ids by similarity to the one that failed (pure, tested). */
 export function closestModels(wanted: string, available: string[], limit = 5): string[] {
   const w = wanted.toLowerCase();

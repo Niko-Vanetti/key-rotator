@@ -24,7 +24,7 @@ import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
 import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
 import { listSkillNames } from './agent/tools.js';
 import { parseSnippet, snippetHasData } from './core/snippetParser.js';
-import { pingModel } from './agent/aiTools.js';
+import { analyzeViability } from './agent/aiTools.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -1340,19 +1340,29 @@ export function activate(context: vscode.ExtensionContext) {
         async (progress) => {
           for (const meta of targets) {
             progress.report({ message: meta.label });
-            // Modelos de NVIDIA/OpenRouter: prueba REAL (una respuesta), no un
-            // listado — /v1/models miente (lista modelos que dan 404 o cuelgan).
-            const verdict = isOpenAIProvider(meta.provider)
-              ? await (async () => {
-                  const key = await keyManager.getApiKey(meta.id);
-                  const model = openAIModel(meta);
-                  if (!key) return { ok: false, detail: 'sin API key guardada' };
-                  if (!model) return { ok: false, detail: 'sin modelo elegido' };
-                  return pingModel(openAIEndpoint(meta), key, model);
-                })()
-              : isWebProvider(meta.provider)
-                ? await testWebAccount(meta)
-                : await diagnoseAccount(meta.id);
+            // Modelos de NVIDIA/OpenRouter: análisis de VIABILIDAD real
+            // (consistencia, velocidad, soporte de herramientas) — no un
+            // listado, /v1/models miente (lista modelos que dan 404 o cuelgan).
+            if (isOpenAIProvider(meta.provider)) {
+              const key = await keyManager.getApiKey(meta.id);
+              const model = openAIModel(meta);
+              if (!key || !model) {
+                const detail = !key ? 'sin API key guardada' : 'sin modelo elegido';
+                await keyManager.updateAccountMeta(meta.id, { status: 'error', lastError: detail });
+                void vscode.window.showInformationMessage(`⛔ ${meta.label}: ${detail}`);
+                continue;
+              }
+              const report = await analyzeViability(openAIEndpoint(meta), key, model);
+              const icon = report.verdict === 'recomendado' ? '✅' : report.verdict === 'usable' ? '⚠️' : '⛔';
+              const summary = report.reasons.join(' · ');
+              await keyManager.updateAccountMeta(meta.id, {
+                status: report.verdict === 'no-viable' ? 'error' : 'active',
+                lastError: report.verdict === 'no-viable' ? summary : undefined,
+              });
+              void vscode.window.showInformationMessage(`${icon} ${meta.label} — ${report.verdict}: ${summary}`);
+              continue;
+            }
+            const verdict = isWebProvider(meta.provider) ? await testWebAccount(meta) : await diagnoseAccount(meta.id);
             await keyManager.updateAccountMeta(meta.id, {
               status: verdict.ok ? 'active' : 'error',
               lastError: verdict.ok ? undefined : verdict.detail,
