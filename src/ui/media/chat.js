@@ -302,7 +302,44 @@
     setSending(true); streamingRaw = '';
     streamingEl = addMessage('assistant', '', false);
     streamingEl.parentElement.classList.add('streaming');
+    setStatus('Conectando…');
     vscode.postMessage({ type: 'send', text });
+  }
+
+  // ---------- indicador de actividad en vivo ----------
+  // Una sola línea que se REEMPLAZA (no se apila) + cronómetro, para que nunca
+  // parezca congelado mientras el modelo piensa o usa herramientas.
+  let statusEl = null, statusTimer = null, statusStart = 0, statusText = '';
+  function setStatus(text) {
+    if (!text) { clearStatus(); return; }
+    statusText = text;
+    if (!statusEl) {
+      statusEl = document.createElement('div');
+      statusEl.className = 'status-line';
+      statusStart = Date.now();
+      if (statusTimer) clearInterval(statusTimer);
+      statusTimer = setInterval(paintStatus, 1000);
+    }
+    // Siempre al final del hilo, justo antes de la burbuja en curso.
+    const anchor = streamingEl ? streamingEl.parentElement : null;
+    if (anchor && anchor.parentElement === messagesEl) messagesEl.insertBefore(statusEl, anchor);
+    else messagesEl.appendChild(statusEl);
+    paintStatus();
+    scrollToBottom();
+  }
+  function paintStatus() {
+    if (!statusEl) return;
+    const secs = Math.floor((Date.now() - statusStart) / 1000);
+    const clock = secs >= 60 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's';
+    statusEl.innerHTML =
+      '<span class="spinner"></span><span class="status-text"></span><span class="status-time"></span>';
+    statusEl.querySelector('.status-text').textContent = statusText;
+    statusEl.querySelector('.status-time').textContent = clock;
+  }
+  function clearStatus() {
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (statusEl) { statusEl.remove(); statusEl = null; }
+    statusText = '';
   }
   function send() {
     const text = inputEl.value.trim();
@@ -486,14 +523,16 @@
         streamingRaw = ''; streamingEl = addMessage('assistant', '', false); streamingEl.parentElement.classList.add('streaming');
         break;
       case 'info': addNotice('info', msg.text); break;
+      case 'status': setStatus(msg.text); break;
       case 'turnError':
         // Drop the partial bubble — its text was an error notice, not a reply.
         if (streamingEl) { streamingEl.parentElement.remove(); streamingEl = null; streamingRaw = ''; }
         addNotice('error', '⚠ ' + msg.text);
+        clearStatus();
         setSending(false);
         flushQueue();
         break;
-      case 'done': finalizeStreaming(); setSending(false); flushQueue(); break;
+      case 'done': finalizeStreaming(); clearStatus(); setSending(false); flushQueue(); break;
     }
   });
 

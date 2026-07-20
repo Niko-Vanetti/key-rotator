@@ -95,6 +95,8 @@ export interface AgentTurnOpts {
   onDelta(text: string): void;
   /** Fired before each tool execution (for the UI activity line). */
   onToolStart(name: string, argsJson: string): void;
+  /** Fired when a transient failure (504, timeout…) triggers a retry. */
+  onRetry?(info: string): void;
   maxPerMinute?: number;
   throttleKey?: string;
   maxSteps?: number;
@@ -113,7 +115,7 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
 
   for (let step = 0; step < maxSteps; step++) {
     if (opts.signal?.aborted) return { text: pieces.join('\n\n') };
-    const res = await streamCall(opts);
+    const res = await streamCall(opts, opts.onRetry);
     if ('error' in res) return res;
 
     if (res.state.content) pieces.push(res.state.content);
@@ -147,46 +149,112 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
   };
 }
 
+/** Gateway hiccups that are worth retrying (502/503/504, 408, 429). */
+export function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+/** Backoff for attempt n (0-based), in ms (pure, tested). */
+export function retryDelay(attempt: number): number {
+  return Math.min(2000 * 2 ** attempt, 15_000);
+}
+
+const MAX_TRANSIENT_RETRIES = 3;
+/** Hard ceiling per request; long research turns still fit comfortably. */
+const REQUEST_TIMEOUT_MS = 300_000;
+
 async function streamCall(
+  opts: AgentTurnOpts,
+  onRetry?: (info: string) => void
+): Promise<{ state: StreamState } | { error: string; rateLimited?: boolean }> {
+  const url = opts.endpoint.replace(/\/+$/, '') + '/chat/completions';
+
+  for (let attempt = 0; ; attempt++) {
+    if (opts.maxPerMinute && opts.throttleKey) {
+      await waitForSlot(opts.throttleKey, opts.maxPerMinute);
+    }
+    // Our own timeout as well as the caller's stop signal: a hung gateway must
+    // not freeze the chat forever.
+    const timer = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const signal = opts.signal ? anySignal([opts.signal, timer]) : timer;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${opts.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/Nikorasu-Vanetti/key-rotator',
+          'X-Title': 'KeyRotator',
+        },
+        body: JSON.stringify({
+          model: opts.model,
+          messages: opts.messages,
+          tools: opts.tools ?? AGENT_TOOLS,
+          stream: true,
+          ...(opts.params ?? {}),
+        }),
+        signal,
+      });
+    } catch (e) {
+      if (opts.signal?.aborted) return { error: 'cancelado por el usuario' };
+      // Network drop / our timeout → retry a few times before giving up.
+      if (attempt < MAX_TRANSIENT_RETRIES) {
+        const wait = retryDelay(attempt);
+        onRetry?.(`sin respuesta (${(e as Error).message}) — reintento ${attempt + 1}/${MAX_TRANSIENT_RETRIES} en ${Math.round(wait / 1000)}s`);
+        await sleep(wait);
+        continue;
+      }
+      return { error: `sin conexión tras ${MAX_TRANSIENT_RETRIES} reintentos: ${(e as Error).message}` };
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let msg = body.slice(0, 300);
+      try {
+        msg = (JSON.parse(body) as { error?: { message?: string } })?.error?.message || msg;
+      } catch {
+        /* keep raw */
+      }
+      // 504 y compañía son caídas momentáneas del gateway: reintentar.
+      if (isTransientStatus(res.status) && attempt < MAX_TRANSIENT_RETRIES && !opts.signal?.aborted) {
+        const wait = retryDelay(attempt);
+        onRetry?.(
+          `el servidor devolvió ${res.status} — reintento ${attempt + 1}/${MAX_TRANSIENT_RETRIES} en ${Math.round(wait / 1000)}s`
+        );
+        await sleep(wait);
+        continue;
+      }
+      return {
+        error: `HTTP ${res.status}${msg ? `: ${msg}` : ' (el servidor no dio detalle; suele ser una caída momentánea)'}`,
+        rateLimited: res.status === 429,
+      };
+    }
+    return readStream(res, opts);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Combines abort signals (Node 18 lacks AbortSignal.any in some runtimes). */
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  const ctrl = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) {
+      ctrl.abort();
+      break;
+    }
+    s.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+  return ctrl.signal;
+}
+
+async function readStream(
+  res: Response,
   opts: AgentTurnOpts
 ): Promise<{ state: StreamState } | { error: string; rateLimited?: boolean }> {
-  if (opts.maxPerMinute && opts.throttleKey) {
-    await waitForSlot(opts.throttleKey, opts.maxPerMinute);
-  }
-  const url = opts.endpoint.replace(/\/+$/, '') + '/chat/completions';
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${opts.apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://github.com/Nikorasu-Vanetti/key-rotator',
-        'X-Title': 'KeyRotator',
-      },
-      body: JSON.stringify({
-        model: opts.model,
-        messages: opts.messages,
-        tools: opts.tools ?? AGENT_TOOLS,
-        stream: true,
-        ...(opts.params ?? {}),
-      }),
-      signal: opts.signal,
-    });
-  } catch (e) {
-    return { error: `sin conexión: ${(e as Error).message}` };
-  }
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    let msg = body.slice(0, 300);
-    try {
-      msg = (JSON.parse(body) as { error?: { message?: string } })?.error?.message || msg;
-    } catch {
-      /* keep raw */
-    }
-    return { error: `HTTP ${res.status}: ${msg}`, rateLimited: res.status === 429 };
-  }
 
   const reader = res.body?.getReader();
   if (!reader) return { error: 'respuesta sin cuerpo' };

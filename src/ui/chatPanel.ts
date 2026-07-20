@@ -384,6 +384,7 @@ export class ChatPanel {
               this.post(this.metaMsg(this.session.currentSessionId, label));
             },
             onInfo: (t) => this.post({ type: 'info', text: t }),
+            onStatus: (t) => this.post({ type: 'status', text: t }),
             onModel: (m) => this.post({ type: 'model', model: m }),
             onUsage: (info) => this.post({ type: 'usage', info }),
             onError: (t) => this.post({ type: 'turnError', text: t }),

@@ -159,6 +159,50 @@ export interface AgentBackendContext {
 /** Providers served by the AGENT loop (tools) instead of the plain chat. */
 const AGENT_PROVIDERS = new Set(['nvidia', 'openrouter']);
 
+/** Human-readable "what it's doing" line for a tool call (pure, tested). */
+export function describeTool(name: string, argsJson: string): string {
+  let a: Record<string, unknown> = {};
+  try {
+    a = JSON.parse(argsJson || '{}');
+  } catch {
+    /* sin argumentos legibles */
+  }
+  const short = (v: unknown, n = 60) => {
+    const s = String(v ?? '');
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  };
+  switch (name) {
+    case 'web_search':
+      return `Buscando en internet: "${short(a.query)}"`;
+    case 'fetch_url':
+      return `Leyendo ${short(a.url, 70)}`;
+    case 'deep_research':
+      return `Investigando a fondo: "${short(a.topic)}"`;
+    case 'read_file':
+      return `Leyendo el archivo ${short(a.path, 70)}`;
+    case 'list_directory':
+      return `Explorando la carpeta ${short(a.path ?? '.', 70)}`;
+    case 'write_file':
+      return `Escribiendo ${short(a.path, 70)}`;
+    case 'delete_file':
+      return `Borrando ${short(a.path, 70)}`;
+    case 'run_command':
+      return `Ejecutando: ${short(a.command, 70)}`;
+    case 'set_working_folder':
+      return `Cambiando la carpeta de trabajo a ${short(a.path, 70)}`;
+    case 'generate_image':
+      return `Generando una imagen: "${short(a.prompt)}"`;
+    case 'use_skill':
+      return `Cargando la skill "${short(a.name, 40)}"`;
+    case 'search_chats':
+      return `Recordando conversaciones sobre "${short(a.query, 40)}"`;
+    case 'read_chat':
+      return 'Releyendo una conversación anterior';
+    default:
+      return name.startsWith('mcp__') ? `Usando la integración ${name.split('__')[1] ?? name}` : `Usando ${name}`;
+  }
+}
+
 /** UI-facing callbacks for a single in-flight turn. */
 export interface TurnHandlers {
   onDelta(text: string): void;
@@ -168,6 +212,13 @@ export interface TurnHandlers {
   onDone(fullText: string): void;
   /** Reports the actual model claude reported using (from the init event). */
   onModel(model: string): void;
+  /**
+   * Live "what am I doing right now" line (investigando, leyendo X, …). It
+   * REPLACES the previous status instead of stacking notices, so the user
+   * always sees the current activity and never a frozen empty bubble.
+   * Empty string clears it.
+   */
+  onStatus?(text: string): void;
   /** Optional: usage/limit info from rate_limit_event (resetsAt, status…). */
   onUsage?(info: Record<string, unknown>): void;
 }
@@ -200,6 +251,9 @@ export class ChatSession {
   private abort: AbortController | null = null;
   /** 'agency' = a director model plans and runs the others in parallel. */
   private mode: 'individual' | 'agency' = 'individual';
+  /** Live-status bookkeeping for agency calls whose text isn't streamed out. */
+  private agencyChars = 0;
+  private lastStatusAt = 0;
 
   constructor(private backend: ChatBackend) {}
 
@@ -427,8 +481,9 @@ export class ChatSession {
     handlers.onModel(`agencia · director ${director.model}`);
     handlers.onInfo(`🏢 Modo agencia — director: ${director.model} · modelos disponibles: ${roster.length}`);
 
-    // Un solo modelo: no hay nada que repartir, trabaja directo.
-    const runOne = (m: AgencyModel, prompt: string, sys: string) =>
+    // Llamada interna de la agencia: su texto no se transmite, pero SÍ hay que
+    // reportar actividad o el chat parece congelado (el usuario no ve nada).
+    const runOne = (m: AgencyModel, prompt: string, sys: string, who = m.model) =>
       runAgentTurn({
         endpoint: m.endpoint,
         apiKey: m.apiKey,
@@ -439,8 +494,23 @@ export class ChatSession {
         ],
         tools: this.agencyTools(),
         execute: (n, a) => this.agencyExecute(n, a, s, gate, m, ctx),
-        onDelta: () => {},
-        onToolStart: (n) => handlers.onInfo(`   🔧 ${m.model}: ${n}`),
+        onDelta: (t) => {
+          this.agencyChars += t.length;
+          const now = Date.now();
+          if (now - this.lastStatusAt > 400) {
+            this.lastStatusAt = now;
+            handlers.onStatus?.(`${who} está deliberando… (${this.agencyChars.toLocaleString('es-DO')} caracteres)`);
+          }
+        },
+        onToolStart: (n, a) => {
+          this.agencyChars = 0;
+          handlers.onStatus?.(`${who}: ${describeTool(n, a)}`);
+          handlers.onInfo(`   🔧 ${who}: ${describeTool(n, a)}`);
+        },
+        onRetry: (info) => {
+          handlers.onStatus?.(`${who}: ${info}`);
+          handlers.onInfo(`   ⏳ ${who}: ${info}`);
+        },
         maxPerMinute: ChatSession.RPM_CAPS[m.provider],
         throttleKey: ChatSession.RPM_CAPS[m.provider] ? `${m.provider}:${m.accountId}` : undefined,
         params: m.params,
@@ -458,6 +528,7 @@ export class ChatSession {
     // 1) INVESTIGAR + FORMAR EL EQUIPO (el director usa la web de verdad y
     //    valida modelo por modelo, con la fecha de cada evidencia).
     handlers.onInfo('🔎 Etapa 1 — investigando qué modelo rinde mejor en cada parte (con evidencia reciente)…');
+    handlers.onStatus?.(`Etapa 1: ${director.model} investiga al equipo`);
     const today = new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' });
     const planRes = await runOne(
       director,
@@ -470,7 +541,12 @@ export class ChatSession {
       return;
     }
     if ('error' in planRes) {
-      handlers.onError(`El director (${director.model}) falló al planificar: ${planRes.error}`);
+      // El director se cayó (504 del gateway, timeout…). En vez de dejar al
+      // usuario sin nada, se atiende la tarea en modo individual.
+      handlers.onInfo(
+        `⚠ El director (${director.model}) no pudo completar la planificación: ${planRes.error}. Sigo con un solo modelo para no dejarte sin respuesta.`
+      );
+      await this.runAgentTurnFor(text, account, handlers, attachments);
       return;
     }
     const plan = normalizePlan(extractJson(planRes.text), roster);
@@ -521,6 +597,7 @@ export class ChatSession {
     }
 
     // 3) TRABAJAR EN PARALELO
+    handlers.onStatus?.(`Etapa 3: ${plan.assignments.length} especialista(s) trabajando en paralelo`);
     const workerSys = (role: string) =>
       `${agentSystemPrompt(s.cwd, ctx.skillNames())}\n\nTrabajas como "${role}" dentro de una agencia. Haz TU parte completa y entrega el resultado final de tu parte, listo para integrarse. No preguntes nada: si falta un dato, decídelo con tu mejor criterio y sigue.${envBrief}`;
     const started = Date.now();
@@ -547,6 +624,7 @@ export class ChatSession {
       return;
     }
     handlers.onInfo(`⏱ Trabajo en paralelo terminado en ${Math.round((Date.now() - started) / 1000)}s. Integrando…`);
+    handlers.onStatus?.(`Etapa 4: ${director.model} integra las entregas`);
 
     // 4) SINTETIZAR (esta sí se transmite al usuario)
     const finalRes = await runAgentTurn({
@@ -560,7 +638,14 @@ export class ChatSession {
       tools: this.agencyTools(),
       execute: (n, a) => this.agencyExecute(n, a, s, gate, director, ctx),
       onDelta: (t) => handlers.onDelta(t),
-      onToolStart: (n) => handlers.onInfo(`🔧 director: ${n}`),
+      onToolStart: (n, a) => {
+        handlers.onStatus?.(`Director: ${describeTool(n, a)}`);
+        handlers.onInfo(`🔧 director: ${describeTool(n, a)}`);
+      },
+      onRetry: (info) => {
+        handlers.onStatus?.(`Director: ${info}`);
+        handlers.onInfo(`⏳ ${info}`);
+      },
       maxPerMinute: ChatSession.RPM_CAPS[director.provider],
       throttleKey: ChatSession.RPM_CAPS[director.provider] ? `${director.provider}:${director.accountId}` : undefined,
       params: director.params,
@@ -597,6 +682,7 @@ export class ChatSession {
   ): Promise<void> {
     const team = s.team!;
     handlers.onInfo(`🏢 Equipo activo: ${team.map((t) => `${t.role} (${t.model})`).join(' · ')}`);
+    handlers.onStatus?.('El director decide quién atiende esto');
 
     // 0) ¿Hay una vacante y el usuario dice que ya integró el modelo? Entonces
     //    el recién llegado toma el puesto y continúa el trabajo del anterior.
@@ -643,7 +729,14 @@ export class ChatSession {
           tools: this.agencyTools(),
           execute: (n, a) => this.agencyExecute(n, a, s, gate, model, ctx),
           onDelta: (t) => handlers.onDelta(t),
-          onToolStart: (n) => handlers.onInfo(`   🔧 ${member.role}: ${n}`),
+          onToolStart: (n, a) => {
+            handlers.onStatus?.(`${member.role}: ${describeTool(n, a)}`);
+            handlers.onInfo(`   🔧 ${member.role}: ${describeTool(n, a)}`);
+          },
+          onRetry: (info) => {
+            handlers.onStatus?.(`${member.role}: ${info}`);
+            handlers.onInfo(`   ⏳ ${info}`);
+          },
           maxPerMinute: ChatSession.RPM_CAPS[model.provider],
           throttleKey: ChatSession.RPM_CAPS[model.provider] ? `${model.provider}:${model.accountId}` : undefined,
           params: model.params,
@@ -686,7 +779,14 @@ export class ChatSession {
         tools: this.agencyTools(),
         execute: (n, a) => this.agencyExecute(n, a, s, gate, m, ctx),
         onDelta: (t) => handlers.onDelta(t),
-        onToolStart: (n) => handlers.onInfo(`🔧 director: ${n}`),
+        onToolStart: (n, a) => {
+        handlers.onStatus?.(`Director: ${describeTool(n, a)}`);
+        handlers.onInfo(`🔧 director: ${describeTool(n, a)}`);
+      },
+      onRetry: (info) => {
+        handlers.onStatus?.(`Director: ${info}`);
+        handlers.onInfo(`⏳ ${info}`);
+      },
         maxPerMinute: ChatSession.RPM_CAPS[m.provider],
         throttleKey: ChatSession.RPM_CAPS[m.provider] ? `${m.provider}:${m.accountId}` : undefined,
         params: m.params,
@@ -702,6 +802,7 @@ export class ChatSession {
     owner.strikes = (owner.strikes ?? 0) + (looksLikeComplaint(text) ? 1 : 0);
     if ((owner.strikes ?? 0) >= 2) {
       handlers.onInfo(`⚖ El director evalúa a ${owner.role} (${owner.model}) tras ${owner.strikes} señalamientos…`);
+      handlers.onStatus?.(`El director evalúa el desempeño de ${owner.role}`);
       const verdictRes = await runOne(
         director,
         evaluationPrompt(owner, text, roster),
@@ -719,6 +820,7 @@ export class ChatSession {
         owner.evidence = `Relevo del ${new Date().toLocaleDateString('es-DO')}: ${verdict.reason}`;
       } else if (verdict.action === 'hire') {
         handlers.onInfo('🔎 Ninguno de tus modelos da la talla para esto. Buscando candidato en NVIDIA Build…');
+        handlers.onStatus?.('Buscando un candidato en NVIDIA Build');
         const today = new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' });
         const cvRes = await runOne(
           director,
@@ -772,7 +874,14 @@ export class ChatSession {
       tools: this.agencyTools(),
       execute: (n, a) => this.agencyExecute(n, a, s, gate, model, ctx),
       onDelta: (t) => handlers.onDelta(t),
-      onToolStart: (n) => handlers.onInfo(`   🔧 ${owner!.role}: ${n}`),
+      onToolStart: (n, a) => {
+        handlers.onStatus?.(`${owner!.role}: ${describeTool(n, a)}`);
+        handlers.onInfo(`   🔧 ${owner!.role}: ${describeTool(n, a)}`);
+      },
+      onRetry: (info) => {
+        handlers.onStatus?.(`${owner!.role}: ${info}`);
+        handlers.onInfo(`   ⏳ ${info}`);
+      },
       maxPerMinute: ChatSession.RPM_CAPS[model.provider],
       throttleKey: ChatSession.RPM_CAPS[model.provider] ? `${model.provider}:${model.accountId}` : undefined,
       params: model.params,
@@ -982,6 +1091,8 @@ export class ChatSession {
     };
 
     const cap = ChatSession.RPM_CAPS[oai.provider];
+    handlers.onStatus?.(`Pensando con ${oai.model}`);
+    let firstToken = true;
     const res = await runAgentTurn({
       endpoint: oai.endpoint,
       apiKey: oai.apiKey,
@@ -989,8 +1100,22 @@ export class ChatSession {
       messages: s.messages,
       tools,
       execute,
-      onDelta: (t) => handlers.onDelta(t),
-      onToolStart: (name, args) => handlers.onInfo(`🔧 ${name} ${args.slice(0, 140)}`),
+      onDelta: (t) => {
+        if (firstToken) {
+          firstToken = false;
+          handlers.onStatus?.('Escribiendo la respuesta');
+        }
+        handlers.onDelta(t);
+      },
+      onToolStart: (name, args) => {
+        handlers.onStatus?.(describeTool(name, args));
+        handlers.onInfo(`🔧 ${name} ${args.slice(0, 140)}`);
+        firstToken = true; // tras la herramienta vuelve a "pensar"
+      },
+      onRetry: (info) => {
+        handlers.onStatus?.(info);
+        handlers.onInfo(`⏳ ${info}`);
+      },
       maxPerMinute: cap,
       throttleKey: cap ? `${oai.provider}:${account.id}` : undefined,
       params: oai.params,
