@@ -1,28 +1,13 @@
 # KeyRotator
 
-Extensión de VS Code para gestionar múltiples cuentas/API keys de proveedores de IA
-(Claude/Anthropic, OpenAI, Gemini, Ollama, Qwen, OpenRouter, Groq, y cualquier otro
-proveedor compatible) y rotar automáticamente entre ellas cuando una alcanza su límite
-de uso.
+Extensión de VS Code que convierte tus API keys de **NVIDIA Build** (y **OpenRouter**)
+en un agente con herramientas —o en una agencia de varios modelos coordinados— dentro
+del editor: lee y escribe archivos, ejecuta comandos, busca en la web, genera imágenes
+e investiga a fondo, todo con tu aprobación explícita en cada paso sensible.
 
-## Características
-
-- **StatusBar** con el estado de la cuenta activa — clic para reportar un rate limit manualmente.
-- **TreeView** lateral con todas las cuentas agrupadas por proveedor.
-- **Dashboard** (Keys / Historial / Estadísticas) para gestionar cuentas, ver el historial
-  de rotaciones y estadísticas de uso.
-- **Chat con failover automático**: una interfaz de chat (similar a Claude Code) que corre
-  el CLI `claude` por debajo. Si la cuenta activa llega a su límite de uso **o se queda sin
-  saldo**, KeyRotator cambia a la siguiente cuenta y **continúa la misma conversación**
-  (vía `--resume`) sin que pierdas el hilo. Ver "Chat con failover" abajo.
-- **Auto-detección de proveedor**: pegá una API key y se identifica automáticamente por
-  patrón conocido (Anthropic, OpenAI, Gemini, Groq, HuggingFace, Replicate, Cohere,
-  Together AI, OpenRouter). Si no se reconoce, usa Gemini Flash (gratis) para
-  identificarlo por IA.
-- **Rotación automática o con confirmación**, configurable por cuenta.
-- **Chequeo de salud periódico** para detectar rate limits proactivamente.
-- **Integración con Claude Code**: al rotar, actualiza `ANTHROPIC_API_KEY` en el entorno
-  y en `.claude/settings.json` si existe.
+Cada API key que agregas equivale a un modelo. No hay configuración de proveedor
+genérico ni credenciales sueltas: pegas el código de ejemplo de build.nvidia.com y la
+extensión detecta el resto sola.
 
 ## Instalación
 
@@ -32,110 +17,158 @@ npm run package
 code --install-extension key-rotator-0.1.0.vsix
 ```
 
-## Uso
+## Primeros pasos
 
-1. Abrí el panel **KeyRotator** en la Activity Bar (ícono de llave).
-2. Click en `+` (o "KeyRotator: Open Dashboard") para abrir el dashboard.
-3. Pegá una API key — el proveedor y la variable de entorno se detectan automáticamente.
-4. Completá el nombre de la cuenta y agregala. La prioridad se asigna por orden de carga
-   (la primera cuenta de un proveedor es prioridad 1).
-5. En cada cuenta podés alternar entre modo **Auto** (rota sola al detectar rate limit)
-   y **Confirmar** (te pregunta antes de rotar).
-6. Si notás un rate limit antes del próximo chequeo automático, hacé click en el ítem
-   de la StatusBar o ejecutá "KeyRotator: Report Rate Limit on Active Account".
+1. Abre el panel **KeyRotator** en la barra de actividad (ícono de llave).
+2. En la vista **API Keys**, haz clic en el ícono 📋 ("Pegar código") —o abre el
+   **Dashboard** ("KeyRotator: Open Dashboard") y usa la caja de texto.
+3. Pega ahí el bloque de código de ejemplo de build.nvidia.com (o de OpenRouter) tal
+   cual, o solo tu API key. Se detectan automáticamente el proveedor, el endpoint, el
+   modelo y los parámetros (`temperature`, `top_p`, `max_tokens`, `seed`).
+4. Si el código traía una key de ejemplo (un marcador de posición), se te pide la real
+   en un campo oculto.
+5. La cuenta queda creada —con el nombre del modelo— y el chat se abre listo para
+   usarla.
+6. Repite para cada modelo. La lista de la vista **API Keys** muestra cada uno por su
+   nombre, en orden alfabético, con un botón para eliminarlo.
 
-## Chat con failover
+## Verificar qué modelos funcionan de verdad
 
-El **Chat** te deja conversar con Claude dentro de VS Code lanzando el CLI `claude` por
-debajo (un proceso por turno, continuidad con `--resume`). Tiene **tres modos**
-(`keyRotator.chatMode`):
+El catálogo de modelos que devuelve la API no siempre coincide con lo que tu cuenta
+puede usar en la práctica: algunos dan error, otros tardan minutos en responder o
+nunca lo hacen. Haz clic derecho sobre un modelo (o usa "KeyRotator: Probar conexión")
+para correr un análisis real: dos peticiones para medir velocidad y consistencia, más
+una prueba de si el modelo invoca herramientas de verdad. El resultado es un
+veredicto:
 
-### Modo `profiles` (por defecto, recomendado) — integraciones de claude.ai + rotación
+- ✅ **recomendado** — responde rápido y soporta herramientas.
+- ⚠️ **usable** — funciona, pero con un aviso concreto (lento, inconsistente, o sin
+  soporte de herramientas).
+- ⛔ **no viable** — no respondió ninguna vez; se excluye automáticamente del equipo
+  del Modo agencia.
 
-Da **lo mejor de todo**: las integraciones gestionadas de claude.ai (Canva, Drive, Gmail,
-Calendar) **Y** rotación multi-cuenta. Cada cuenta usa un **login propio aislado** vía un
-`CLAUDE_CONFIG_DIR` separado (bajo el almacenamiento de la extensión), así que cada una
-trae sus propios MCPs gestionados, Skills y hooks. Al llegar al límite de uso de una
-cuenta, KeyRotator rota a la siguiente cambiando el `CLAUDE_CONFIG_DIR` y continúa con
-`--resume`.
+## Chat — Modo individual
 
-**Setup (una sola vez por cuenta):** ejecutá **"KeyRotator: Log in Account (Chat)"**,
-elegí la cuenta, y completá el login en el navegador. Repetí para cada cuenta. Listo.
+- El selector **Modelo** (parte inferior) lista todos tus modelos —uno por API key—
+  en orden alfabético. Elegir uno cambia de cuenta al instante.
+- Arrastra un archivo sobre la conversación para que el agente lo lea (si está fuera
+  de su carpeta de trabajo, te pide aprobación antes).
+- El botón **+** adjunta un archivo o una imagen (visión, si el modelo la soporta).
+- El agente puede: leer, listar, crear y borrar archivos; ejecutar comandos; cambiar
+  su carpeta de trabajo; cargar tus Skills; buscar en tus conversaciones anteriores;
+  buscar en la web; leer una página completa; y generar imágenes.
+- El interruptor **🔬 Investigación profunda** está apagado por defecto: así, un
+  simple saludo no dispara búsquedas. Actívalo para que el modelo contraste varias
+  fuentes con fecha verificada antes de responder.
+- El botón **Enviar** se convierte en **Detener** mientras responde. Puedes seguir
+  escribiendo durante ese tiempo: los mensajes se encolan y se envían al terminar el
+  turno en curso.
+- Una línea de estado en vivo (con cronómetro) muestra qué está haciendo el modelo en
+  cada momento —buscando, leyendo un archivo, razonando, procesando el resultado de
+  una herramienta— para que nunca parezca congelado.
 
-Si una cuenta no tiene sesión iniciada, el chat te lo dice y te indica el comando.
+## Chat — Modo agencia
 
-### Modo `failover` — rotación multi-cuenta por API key
+Se activa desde el menú ▾ junto al nombre de la cuenta activa. En este modo un
+**modelo director** (el mejor disponible, con preferencia por los de Google; también
+puedes fijarlo tú desde el Dashboard) organiza el trabajo en cuatro etapas:
 
-Lanza `claude --bare`, que fuerza autenticación por `ANTHROPIC_API_KEY`. Usa la cuenta de
-Anthropic **activa de mayor prioridad** y, cuando llega a su límite de uso **o se queda
-sin saldo de API**, KeyRotator:
+1. **Investigación** — decide qué disciplinas necesita la tarea (por ejemplo,
+   backend/frontend/seguridad para un programa) y qué modelo tuyo rinde mejor en
+   cada una, validando con búsquedas reales qué tan reciente es cada dato.
+2. **Preparación del entorno** — carga las Skills que la investigación identificó
+   como útiles y deja disponibles tus integraciones MCP.
+3. **Trabajo en paralelo** — cada especialista hace su parte a la vez, con su propia
+   API key y el mismo set de herramientas del modo individual.
+4. **Síntesis** — el director integra las entregas en una única respuesta.
 
-- la marca como agotada y rota a la siguiente cuenta activa (motor de rotación existente),
-- relanza el **mismo turno** con `claude --resume <session-id>` y la nueva `ANTHROPIC_API_KEY`,
-- muestra un aviso "↻ Cambiando a <cuenta>" y **continúa la misma conversación**.
+El equipo queda fijo para esa conversación: si luego dices que "esta parte no
+funciona", el director enruta el mensaje al responsable de esa área, que se presenta,
+investiga la causa real y la corrige. Si un especialista falla repetidamente, el
+director puede reemplazarlo por otro de tus modelos —pasándole el contexto de lo ya
+hecho— o, si ninguno da la talla, investigar en build.nvidia.com y proponerte un
+candidato con su currículum (fortalezas, evidencia con fecha, limitaciones). Tú
+decides si lo agregas; al avisar que ya está integrado, el modelo nuevo toma el
+puesto y continúa el trabajo pendiente.
 
-**Funciones disponibles en modo API:**
+## Carpetas que usa
 
-- ✅ Rotación multi-cuenta real (el objetivo principal).
-- ✅ Skills vía `/nombre-skill`.
-- ✅ **Tus MCPs propios/locales** — configurá `keyRotator.chatMcpConfig` con la ruta a un
-  JSON `{"mcpServers": {...}}` y se cargan con `--mcp-config`, incluso bajo `--bare`.
-- ✅ Plugins/skills/agents propios vía `keyRotator.chatExtraArgs`
-  (ej: `["--plugin-dir", "C:/ruta", "--add-dir", "C:/proyecto"]`).
-- ❌ Integraciones **gestionadas de claude.ai** (Canva, Google Drive, Gmail, Calendar):
-  están atadas a tu login OAuth y **solo** funcionan en modo `full`.
+- `Documents\KeyRotator` — carpeta de trabajo por defecto: ahí quedan los scripts,
+  archivos y resultados que genere el agente (subcarpeta `salidas\` para imágenes).
+- `Documents\KeyRotator Chats` — el historial de conversaciones, en su propio
+  almacén, separado del de Claude Code.
+- `Documents\KeyRotator Config` — tu configuración propia de MCP (`mcp.json`) y de
+  Skills (`skills\`).
 
-> ⚠ Cada cuenta necesita una **API key real de la Consola de Anthropic con saldo**
-> (pay-as-you-go) — tu suscripción Pro/Max **no** cubre llamadas con API key cruda; si la
-> key no tiene crédito verás "Credit balance is too low" y KeyRotator rotará buscando una
-> que sí tenga.
+## MCP y Skills
 
-### Modo `full` — tu login por defecto, sin rotación
+El Dashboard tiene pestañas para administrar tus servidores **MCP** y tus **Skills**
+(ver, editar, agregar, eliminar), con botones para sincronizarlos desde tu
+configuración de Claude Code (`~/.claude.json` y `~/.claude/skills`). Nota: las
+integraciones gestionadas por claude.ai (Canva, Google Drive, Gmail, Calendar) son
+OAuth y no se pueden vincular por esta vía; solo los servidores MCP que se lanzan con
+un comando propio funcionan aquí.
 
-Usa tu **login de Claude por defecto** (el del Claude Code normal): hereda los MCPs
-gestionados de claude.ai, Skills, hooks y `CLAUDE.md`. Una sola cuenta, **sin rotación**.
-Cero setup, pero sin failover.
+## Vista lateral y barra de estado
 
-### Uso
+La vista **API Keys** lista tus modelos; haz clic derecho sobre uno para más opciones
+(probar conexión, renombrar, eliminar, ajustar prioridad). El ítem de la barra de
+estado muestra cuántos de tus modelos están activos y permite reportar un límite de
+uso detectado antes del próximo chequeo automático.
 
-1. Abrí el chat con el botón 💬 en la barra de la vista KeyRotator o el comando
-   **"KeyRotator: Open Chat"**.
-2. En modo `profiles` (default): iniciá sesión en cada cuenta una vez con
-   **"KeyRotator: Log in Account (Chat)"**.
-3. Escribí normalmente. El badge del encabezado muestra qué cuenta está activa; el botón
-   "＋ Nuevo" inicia una conversación limpia.
+## Soporte heredado: chat clásico de Claude
 
-Requisitos: el CLI `claude` instalado y en el `PATH` (el mismo Claude Code).
+Si no tienes ningún modelo de NVIDIA Build u OpenRouter configurado, el chat cae de
+vuelta a un modo clásico que conversa con Claude lanzando el CLI `claude` por debajo,
+con rotación entre cuentas de Anthropic. No es el flujo principal de la extensión,
+pero el código sigue ahí. Se controla con `keyRotator.chatMode`:
 
-> Nota de plataforma: el chat es una superficie **separada** de la sesión de Claude Code
-> que ya tenés abierta en el panel — no "continúa" esa sesión OAuth concreta (límite de
-> plataforma). Lo que sí logra el modo `profiles` es darte una experiencia de chat
-> ininterrumpida, con todas las integraciones de claude.ai, que **rueda entre tus
-> cuentas** cuando una llega a su límite — usando un login aislado por cuenta.
+- `full` (por defecto) — usa tu login de Claude tal cual, sin rotación.
+- `profiles` — login aislado por cuenta; rota entre ellas conservando las
+  integraciones de claude.ai.
+- `failover` — rota por API key (`ANTHROPIC_API_KEY`); requiere saldo de la Consola
+  de Anthropic, ya que tu suscripción Pro/Max no cubre llamadas por API key.
 
 ## Configuración
 
+### Agente / Modo agencia
+
 | Setting | Default | Descripción |
 |---|---|---|
-| `keyRotator.healthCheckIntervalMinutes` | `5` | Frecuencia de chequeo de salud por cuenta |
-| `keyRotator.geminiApiKey` | `""` | API key de Gemini para identificación de proveedores desconocidos (opcional) |
-| `keyRotator.preferPrimary` | `true` | Volver a la cuenta de mayor prioridad cuando se recupera |
-| `keyRotator.chatModel` | `""` | Modelo para el Chat (`opus`, `sonnet`, o un id completo). Vacío = default del CLI |
-| `keyRotator.chatMode` | `"profiles"` | `profiles` = login aislado por cuenta (integraciones claude.ai + rotación). `failover` = API key + rotación. `full` = login único sin rotación |
-| `keyRotator.chatMcpConfig` | `""` | Ruta a un JSON `{"mcpServers":{...}}` para cargar MCPs propios en el chat (`--mcp-config`), también en modo API |
-| `keyRotator.chatExtraArgs` | `[]` | Argumentos extra para el CLI claude del chat (`--plugin-dir`, `--add-dir`, `--agents`, etc.) |
+| `keyRotator.agencyDirector` | `"auto"` | Qué modelo dirige la agencia. `"auto"` elige el mejor disponible; también puedes poner el id exacto de uno de tus modelos, o elegirlo en el Dashboard. |
+| `keyRotator.agentUseMcp` | `true` | Permite que el agente use tus servidores MCP. Cada llamada pide aprobación. |
+| `keyRotator.openRouterModel` | `""` | Modelo fijo opcional para cuentas de OpenRouter. Vacío = eliges desde el selector del chat. |
+| `keyRotator.geminiApiKey` | `""` | API key de Gemini para identificar proveedores desconocidos al pegar una key suelta (opcional). |
+| `keyRotator.healthCheckIntervalMinutes` | `5` | Frecuencia del chequeo de salud periódico por cuenta. |
+| `keyRotator.preferPrimary` | `true` | Volver a la cuenta de mayor prioridad cuando se recupera de un límite de uso. |
+
+### Chat clásico de Claude (heredado)
+
+| Setting | Default | Descripción |
+|---|---|---|
+| `keyRotator.chatMode` | `"full"` | `full` = login único sin rotación. `profiles` = login aislado por cuenta. `failover` = API key + rotación. |
+| `keyRotator.chatModel` | `""` | Modelo para el chat clásico (`opus`, `sonnet`, o un id completo). Vacío = default del CLI. |
+| `keyRotator.chatEffort` | `""` | Nivel de esfuerzo/razonamiento (`--effort`). Vacío = default del modelo. |
+| `keyRotator.chatMcpConfig` | `""` | Ruta a un JSON `{"mcpServers":{...}}` propio; se carga tanto en el chat clásico como en el agente. |
+| `keyRotator.chatExtraArgs` | `[]` | Argumentos extra para el CLI `claude` del chat clásico. |
+| `keyRotator.webChatBrowser` | `"auto"` | Navegador que usa el chat web (cuentas tipo DeepSeek). |
+| `keyRotator.webChatUseRealProfile` | `false` | Usar tu perfil real del navegador (con tu sesión de Google) en vez de uno aislado. |
 
 ## Seguridad
 
-Las API keys se guardan exclusivamente en VS Code Secret Storage (cifrado por el
-sistema operativo). Nunca se escriben en el historial, estadísticas, ni en archivos
-del repositorio.
+Las API keys se guardan exclusivamente en el Secret Storage de VS Code (cifrado por
+el sistema operativo). Nunca se escriben en el historial, las estadísticas ni en
+archivos del repositorio. Los archivos, scripts y comandos que produce el agente
+quedan confinados a su carpeta de trabajo; salir de ella —al leer, escribir, borrar o
+ejecutar algo— requiere tu aprobación explícita.
 
 ## Limitación conocida
 
-VS Code no permite leer el output de otras extensiones, por lo que la detección de
-rate limit usa chequeos de salud periódicos (`GET /v1/models` o equivalente) más un
-comando manual ("Report Rate Limit") para casos detectados antes del próximo chequeo.
+VS Code no permite leer el output interno de un modelo mientras responde, así que la
+detección de problemas combina chequeos de salud periódicos, el análisis de
+viabilidad bajo demanda ("Probar conexión") y un comando manual
+("KeyRotator: Report Rate Limit on Active Account") para los casos detectados antes
+del próximo chequeo automático.
 
 ## Desarrollo
 
@@ -145,5 +178,5 @@ npm test       # corre los tests de la lógica core
 npm run watch  # recompila en modo watch
 ```
 
-Presioná `F5` en VS Code (con este proyecto abierto) para lanzar una ventana de
+Presiona `F5` en VS Code (con este proyecto abierto) para lanzar una ventana de
 "Extension Development Host" con KeyRotator cargado.

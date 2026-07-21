@@ -303,7 +303,7 @@
         "keyRotator.agencyDirector": {
           "type": "string",
           "default": "auto",
-          "description": "Modo agencia: qué modelo dirige (investiga, reparte, evalúa y contrata). 'auto' elige el mejor disponible, prefiriendo los de Google. También puedes escribir el id exacto de uno de tus modelos, o elegirlo en el menú ▾ del chat."
+          "description": "Modo agencia: qué modelo dirige (investiga, reparte, evalúa y contrata). 'auto' elige el mejor disponible, prefiriendo los de Google. También puedes escribir el id exacto de uno de tus modelos, o elegirlo en el Dashboard (pestaña Modelos, selector \"Director de la agencia\")."
         },
         "keyRotator.agentUseMcp": {
           "type": "boolean",
