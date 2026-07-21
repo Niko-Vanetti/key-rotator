@@ -12,6 +12,8 @@ export interface DashboardCallbacks {
   getState(): DashboardState;
   addAccount(account: Account): Promise<void>;
   deleteAccount(id: string): Promise<void>;
+  /** Análisis de viabilidad real de un modelo (velocidad, consistencia, herramientas). */
+  testModel(id: string): Promise<{ verdict: string; summary: string }>;
   toggleSwitchMode(id: string): Promise<void>;
   detectProvider(apiKey: string): Promise<DetectionResult>;
   generateId(): string;
@@ -133,6 +135,13 @@ export class DashboardPanel {
         await this.callbacks.deleteAccount(msg.id);
         this.postState();
         break;
+      case 'testModel': {
+        if (!msg.id) return;
+        const v = await this.callbacks.testModel(msg.id);
+        this.panel.webview.postMessage({ type: 'modelVerdict', id: msg.id, ...v });
+        this.postState(); // refresca el estado (active/error) que el análisis pudo cambiar
+        break;
+      }
       case 'toggleSwitchMode':
         if (!msg.id) return;
         await this.callbacks.toggleSwitchMode(msg.id);

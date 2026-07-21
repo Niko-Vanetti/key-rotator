@@ -295,6 +295,25 @@ export function activate(context: vscode.ExtensionContext) {
       await keyManager.deleteAccount(id);
       refreshUI();
     },
+    // Botón "Probar" del Dashboard: análisis de viabilidad real del modelo.
+    testModel: async (id: string) => {
+      const meta = keyManager.getAllMeta().find((a) => a.id === id);
+      if (!meta || !isOpenAIProvider(meta.provider)) {
+        return { verdict: 'no-viable', summary: 'no es un modelo de NVIDIA Build / OpenRouter' };
+      }
+      const key = await keyManager.getApiKey(id);
+      const model = openAIModel(meta);
+      if (!key || !model) {
+        return { verdict: 'no-viable', summary: !key ? 'sin API key guardada' : 'sin modelo elegido' };
+      }
+      const report = await analyzeViability(openAIEndpoint(meta), key, model);
+      await keyManager.updateAccountMeta(id, {
+        status: report.verdict === 'no-viable' ? 'error' : 'active',
+        lastError: report.verdict === 'no-viable' ? report.reasons.join(' · ') : undefined,
+      });
+      refreshUI();
+      return { verdict: report.verdict, summary: report.reasons.join(' · ') };
+    },
     toggleSwitchMode: async (id: string) => {
       const account = keyManager.getAllMeta().find((a) => a.id === id);
       if (!account) return;
@@ -855,6 +874,36 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
+    // Por defecto, la herramienta ES de NVIDIA Build / OpenRouter: usa el
+    // primer modelo configurado (orden alfabético). Sin esto, un usuario nuevo
+    // caía al login de Claude — que es lo que había que quitar.
+    const openaiAccounts = keyManager
+      .getAllMeta()
+      .filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled')
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const firstApi = openaiAccounts[0];
+    if (firstApi) {
+      const key = await keyManager.getApiKey(firstApi.id);
+      if (key) {
+        return {
+          id: firstApi.id,
+          label: firstApi.label,
+          openai: {
+            apiKey: key,
+            endpoint: openAIEndpoint(firstApi),
+            model: openAIModel(firstApi),
+            provider: firstApi.provider,
+            params: getOaiParams(firstApi.id),
+          },
+        };
+      }
+    }
+
+    // Soporte heredado: SOLO si el usuario tiene una cuenta de Claude de
+    // verdad. Si no hay ningún modelo, devolvemos null y el chat le pide
+    // pegar su código de NVIDIA Build (no inventamos un login de Claude).
+    if (!hasClaudeAccount()) return null;
+
     // Full mode: the user's default logged-in Claude — managed MCPs, single
     // account, no rotation.
     if (mode === 'full') {
@@ -1197,6 +1246,12 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   };
 
+  // ¿El usuario configuró de verdad una cuenta de Claude/Anthropic? El chat
+  // clásico de Claude es soporte heredado: solo aparece si hay una cuenta así,
+  // NUNCA por defecto (antes salía "Claude (tu login)" a quien no tenía nada).
+  const hasClaudeAccount = (): boolean =>
+    keyManager.getAllMeta().some((a) => a.provider === CHAT_PROVIDER);
+
   const activeChatAccountLabel = (): string => {
     // Herramienta NVIDIA/OpenRouter: la etiqueta es el modelo activo (la
     // cuenta preferida, o la primera de la lista alfabética).
@@ -1206,8 +1261,11 @@ export function activate(context: vscode.ExtensionContext) {
       const meta = api.find((a) => a.id === pref) ?? [...api].sort((x, y) => x.label.localeCompare(y.label))[0];
       return openAIModel(meta) || meta.label;
     }
-    if (getChatMode() === 'full') return 'Claude (tu login)';
-    return sortedActiveAnthropic()[0]?.label ?? 'Sin modelos — pega tu código de NVIDIA Build';
+    if (hasClaudeAccount()) {
+      if (getChatMode() === 'full') return 'Claude (tu login)';
+      return sortedActiveAnthropic()[0]?.label ?? 'Claude — sin cuenta activa';
+    }
+    return 'Sin modelos — pega tu código de NVIDIA Build';
   };
 
   /** Swap an account's priority with its neighbor (dir -1 = up, +1 = down). */

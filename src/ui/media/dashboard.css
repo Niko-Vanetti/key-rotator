@@ -39,9 +39,14 @@ body {
   gap: 12px;
 }
 
-.account-card .meta { display: flex; flex-direction: column; gap: 4px; }
+.account-card .meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .account-card .label { font-weight: 600; }
 .account-card .sub { font-size: 0.85em; opacity: 0.75; }
+.account-card .verdict { opacity: 1; }
+.account-card .verdict.recomendado { color: var(--vscode-charts-green); }
+.account-card .verdict.usable { color: var(--vscode-charts-yellow); }
+.account-card .verdict.no-viable { color: var(--vscode-charts-red); }
+.actions button:disabled { opacity: 0.5; cursor: default; }
 
 .badge {
   padding: 2px 8px;

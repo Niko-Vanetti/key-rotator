@@ -375,7 +375,9 @@ export class ChatSession {
     try {
       let account = await this.backend.resolveActiveAccount(this.accountOverride);
       if (!account) {
-        handlers.onError('No hay ninguna cuenta activa. Agrega una cuenta de Anthropic en KeyRotator.');
+        handlers.onError(
+          'Todavía no tienes ningún modelo. Pega el código de ejemplo de build.nvidia.com (u OpenRouter) con el botón 📋 de la vista API Keys, o "＋ Agregar modelo" en el menú del chat.'
+        );
         return;
       }
 

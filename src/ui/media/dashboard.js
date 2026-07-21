@@ -37,15 +37,17 @@ function renderAccounts(accounts) {
     return;
   }
 
-  // Lista mínima (pedido del usuario): el MODELO y su botón Eliminar, nada más.
+  // El MODELO, su veredicto de viabilidad (si se probó) y las acciones.
   for (const acc of accounts) {
     const card = document.createElement('div');
     card.className = 'account-card';
     card.innerHTML = `
       <div class="meta">
         <span class="label">${acc.label}</span>
+        <span class="sub verdict" id="verdict-${acc.id}"></span>
       </div>
       <div class="actions">
+        <button data-action="test" data-id="${acc.id}">Probar</button>
         <button data-action="delete" data-id="${acc.id}">Eliminar</button>
       </div>
     `;
@@ -55,6 +57,26 @@ function renderAccounts(accounts) {
   list.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
     btn.addEventListener('click', () => vscode.postMessage({ type: 'deleteAccount', id: btn.dataset.id }));
   });
+  list.querySelectorAll('button[data-action="test"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const v = document.getElementById('verdict-' + btn.dataset.id);
+      if (v) v.textContent = '⏳ probando… (puede tardar hasta ~1 min)';
+      btn.disabled = true;
+      vscode.postMessage({ type: 'testModel', id: btn.dataset.id });
+    });
+  });
+}
+
+// Resultado del análisis de viabilidad de un modelo (llega del host).
+function showVerdict(msg) {
+  const v = document.getElementById('verdict-' + msg.id);
+  if (v) {
+    const icon = msg.verdict === 'recomendado' ? '✅' : msg.verdict === 'usable' ? '⚠️' : '⛔';
+    v.textContent = `${icon} ${msg.verdict}: ${msg.summary}`;
+    v.className = 'sub verdict ' + msg.verdict;
+  }
+  const btn = document.querySelector('button[data-action="test"][data-id="' + msg.id + '"]');
+  if (btn) btn.disabled = false;
 }
 
 function renderHistory(history) {
@@ -194,6 +216,9 @@ window.addEventListener('message', (event) => {
       break;
     case 'skillState':
       renderList('skillList', msg.skills, 'skill');
+      break;
+    case 'modelVerdict':
+      showVerdict(msg);
       break;
   }
 });
