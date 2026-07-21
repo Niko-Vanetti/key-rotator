@@ -29,10 +29,6 @@
         {
           "id": "keyRotatorChats",
           "name": "Chats"
-        },
-        {
-          "id": "keyRotatorAccounts",
-          "name": "API Keys"
         }
       ]
     },
@@ -152,18 +148,8 @@
           "group": "navigation@2"
         },
         {
-          "command": "keyRotator.pasteSnippet",
-          "when": "view == keyRotatorAccounts",
-          "group": "navigation@0"
-        },
-        {
-          "command": "keyRotator.addAccount",
-          "when": "view == keyRotatorAccounts",
-          "group": "navigation@1"
-        },
-        {
           "command": "keyRotator.openDashboard",
-          "when": "view == keyRotatorAccounts",
+          "when": "view == keyRotatorChats",
           "group": "navigation@3"
         }
       ],
@@ -172,47 +158,6 @@
           "command": "keyRotator.deleteChat",
           "when": "view == keyRotatorChats && viewItem == chatSession",
           "group": "inline@1"
-        },
-        {
-          "command": "keyRotator.moveAccountUp",
-          "when": "view == keyRotatorAccounts && viewItem == account",
-          "group": "inline@1"
-        },
-        {
-          "command": "keyRotator.moveAccountDown",
-          "when": "view == keyRotatorAccounts && viewItem == account",
-          "group": "inline@2"
-        },
-        {
-          "command": "keyRotator.editAccount",
-          "when": "view == keyRotatorAccounts && viewItem == account",
-          "group": "inline@3"
-        },
-        {
-          "command": "keyRotator.testAccount",
-          "when": "view == keyRotatorAccounts && viewItem == account",
-          "group": "inline@4"
-        },
-        {
-          "command": "keyRotator.deleteAccount",
-          "when": "view == keyRotatorAccounts && viewItem == account",
-          "group": "inline@5"
-        },
-        {
-          "command": "keyRotator.activateAccount",
-          "when": "view == keyRotatorAccounts && viewItem == account"
-        },
-        {
-          "command": "keyRotator.disableAccount",
-          "when": "view == keyRotatorAccounts && viewItem == account"
-        },
-        {
-          "command": "keyRotator.loginProfile",
-          "when": "view == keyRotatorAccounts && viewItem == account && config.keyRotator.chatMode == profiles"
-        },
-        {
-          "command": "keyRotator.webChatLogin",
-          "when": "view == keyRotatorAccounts && viewItem == account"
         }
       ]
     },

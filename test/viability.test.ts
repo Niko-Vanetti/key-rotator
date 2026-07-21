@@ -124,3 +124,79 @@ test('analyzeViability: modelo muerto → no-viable, sin llegar a probar herrami
     globalThis.fetch = realFetch;
   }
 });
+
+// ---- escaneo de una carpeta de skills (repo completo) ----------------------
+
+test('findSkills recorre un repo y encuentra carpetas con SKILL.md y .md sueltos', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { findSkills } = await import('../src/agent/tools.js');
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-repo-'));
+  try {
+    // Estructura típica de un repo de skills.
+    const mk = (p: string, content = 'x') => {
+      fs.mkdirSync(path.dirname(path.join(root, p)), { recursive: true });
+      fs.writeFileSync(path.join(root, p), content);
+    };
+    mk('skills/ponytail/SKILL.md');
+    mk('skills/ponytail/referencia.md');          // archivo de apoyo, no es otra skill
+    mk('skills/niko-webdev/SKILL.md');
+    mk('otras/humanizer.md');                      // .md suelto = skill
+    mk('README.md');                               // documentación, NO es skill
+    mk('LICENSE.md');                              // idem
+    mk('.git/config');                             // se ignora
+    mk('node_modules/paquete/SKILL.md');           // se ignora
+
+    const found = findSkills(root);
+    const names = found.map((f) => f.name);
+
+    assert.ok(names.includes('ponytail'), 'debe encontrar la carpeta con SKILL.md');
+    assert.ok(names.includes('niko-webdev'));
+    assert.ok(names.includes('humanizer'), 'debe encontrar el .md suelto');
+    assert.ok(!names.includes('README'), 'README no es una skill');
+    assert.ok(!names.includes('LICENSE'), 'LICENSE no es una skill');
+    assert.ok(!names.includes('paquete'), 'node_modules debe ignorarse');
+    assert.ok(!names.includes('referencia'), 'no debe entrar dentro de una skill ya detectada');
+
+    // La carpeta se marca como directorio (se copia entera con sus archivos).
+    const pony = found.find((f) => f.name === 'ponytail')!;
+    assert.equal(pony.isDir, true);
+    const hum = found.find((f) => f.name === 'humanizer')!;
+    assert.equal(hum.isDir, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findSkills detecta cuando la carpeta apuntada ES la skill', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { findSkills } = await import('../src/agent/tools.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-skill-'));
+  try {
+    fs.writeFileSync(path.join(root, 'SKILL.md'), 'contenido');
+    const found = findSkills(root);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].isDir, true);
+    assert.equal(found[0].source, root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findSkills devuelve vacío en una carpeta sin skills', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { findSkills } = await import('../src/agent/tools.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-vacio-'));
+  try {
+    fs.writeFileSync(path.join(root, 'notas.txt'), 'x');
+    assert.deepEqual(findSkills(root), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

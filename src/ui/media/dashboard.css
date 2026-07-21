@@ -48,6 +48,26 @@ body {
 .account-card .verdict.no-viable { color: var(--vscode-charts-red); }
 .actions button:disabled { opacity: 0.5; cursor: default; }
 
+.drop-zone {
+  border: 1px dashed var(--vscode-input-border, #555);
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  opacity: 0.75;
+  text-align: center;
+}
+.drop-zone.over {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-editorWidget-background);
+  opacity: 1;
+}
+.drop-zone code {
+  background: var(--vscode-textCodeBlock-background);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
 .badge {
   padding: 2px 8px;
   border-radius: 10px;

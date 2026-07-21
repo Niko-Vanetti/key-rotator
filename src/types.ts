@@ -12,6 +12,12 @@ export interface Account {
   switchMode: SwitchMode;
   status: AccountStatus;
   lastError?: string; // why the account became unusable (shown in UI)
+  /**
+   * Resultado del último análisis de viabilidad (velocidad, consistencia,
+   * soporte de herramientas). Se guarda para que el diagnóstico quede visible
+   * junto al modelo sin tener que volver a probarlo.
+   */
+  viability?: { verdict: string; summary: string; at: number };
 }
 
 // Account metadata persisted in globalState (apiKey lives in SecretStorage, keyed by id)

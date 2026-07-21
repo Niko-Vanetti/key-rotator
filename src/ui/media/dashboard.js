@@ -37,14 +37,18 @@ function renderAccounts(accounts) {
     return;
   }
 
-  // El MODELO, su veredicto de viabilidad (si se probó) y las acciones.
+  // El MODELO, su veredicto de viabilidad GUARDADO y las acciones.
+  const ICON = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔' };
   for (const acc of accounts) {
+    const v = acc.viability;
+    const text = v ? `${ICON[v.verdict] || ''} ${v.verdict}: ${v.summary}` : 'sin probar todavía';
+    const cls = v ? 'sub verdict ' + v.verdict : 'sub verdict';
     const card = document.createElement('div');
     card.className = 'account-card';
     card.innerHTML = `
       <div class="meta">
         <span class="label">${acc.label}</span>
-        <span class="sub verdict" id="verdict-${acc.id}"></span>
+        <span class="${cls}" id="verdict-${acc.id}">${text}</span>
       </div>
       <div class="actions">
         <button data-action="test" data-id="${acc.id}">Probar</button>
@@ -187,6 +191,48 @@ function renderList(containerId, items, kind) {
 const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
 on('syncMcpBtn', () => vscode.postMessage({ type: 'syncMcp' }));
 on('syncSkillsBtn', () => vscode.postMessage({ type: 'syncSkills' }));
+on('importSkillsBtn', () => vscode.postMessage({ type: 'importSkills' }));
+
+// Arrastrar una carpeta de skills sobre la pestaña Skills.
+{
+  const zone = document.getElementById('skillDrop');
+  if (zone) {
+    ['dragenter', 'dragover'].forEach((ev) =>
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add('over');
+      })
+    );
+    ['dragleave', 'drop'].forEach((ev) =>
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (ev === 'dragleave' && e.relatedTarget && zone.contains(e.relatedTarget)) return;
+        zone.classList.remove('over');
+      })
+    );
+    zone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const paths = [];
+      const raw = dt.getData('text/uri-list') || dt.getData('resourceurls') || '';
+      if (raw) {
+        try {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) arr.forEach((u) => paths.push(String(u)));
+        } catch {
+          raw.split(/\r?\n/).forEach((u) => { if (u && !u.startsWith('#')) paths.push(u.trim()); });
+        }
+      }
+      if (paths.length === 0 && dt.files && dt.files.length) {
+        for (const f of dt.files) if (f.path) paths.push(f.path);
+      }
+      // Sin ruta usable, se abre el selector de carpetas del sistema.
+      vscode.postMessage({ type: 'importSkills', paths });
+    });
+  }
+}
 on('addMcpBtn', () => {
   const text = document.getElementById('mcpBox').value.trim();
   if (!text) { vscode.postMessage({ type: 'error', message: 'Pega la configuración del servidor MCP.' }); return; }

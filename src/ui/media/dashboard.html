@@ -49,7 +49,14 @@
   <section id="skills" class="panel">
     <div class="section-head">
       <p class="hint">Skills disponibles para el agente (use_skill). Se leen de tu biblioteca.</p>
-      <button id="syncSkillsBtn">⇄ Sincronizar con las Skills de Claude</button>
+      <span>
+        <button id="importSkillsBtn">📁 Importar desde una carpeta…</button>
+        <button id="syncSkillsBtn">⇄ Sincronizar con las Skills de Claude</button>
+      </span>
+    </div>
+    <div id="skillDrop" class="drop-zone">
+      Arrastra aquí una carpeta (por ejemplo tu repo de skills) para importar todas las
+      que contenga: cada subcarpeta con <code>SKILL.md</code> y cada archivo <code>.md</code> suelto.
     </div>
     <div class="add-form">
       <input id="skillName" class="full" placeholder="Nombre de la skill nueva (ej: mi-metodologia)" />

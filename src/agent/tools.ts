@@ -125,6 +125,67 @@ export function readSkill(name: string, roots: string[] = [path.join(os.homedir(
   return `ERROR: no existe la skill "${clean}". Usa un nombre de la lista del prompt del sistema.`;
 }
 
+/** Una skill encontrada al escanear una carpeta (repo de skills, etc.). */
+export interface FoundSkill {
+  /** Nombre con el que quedará registrada. */
+  name: string;
+  /** Ruta de origen: la carpeta de la skill, o el .md suelto. */
+  source: string;
+  /** true = carpeta con SKILL.md (se copia entera); false = archivo .md. */
+  isDir: boolean;
+}
+
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.vscode', 'dist', 'out', '__pycache__']);
+/** Archivos .md sueltos que son documentación del repo, no skills. */
+const NOT_A_SKILL = /^(readme|license|licence|changelog|contributing|code_of_conduct|security)$/i;
+
+/**
+ * Recorre una carpeta y encuentra todas las skills que contenga, en cualquier
+ * nivel: subcarpetas con SKILL.md (se toman enteras, con sus archivos de
+ * apoyo) y archivos .md sueltos. Pensado para apuntar a un repo de skills
+ * completo y traérselas todas de una vez.
+ */
+export function findSkills(root: string, maxDepth = 4): FoundSkill[] {
+  const found: FoundSkill[] = [];
+  const seen = new Set<string>();
+
+  const add = (s: FoundSkill) => {
+    const key = s.name.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      found.push(s);
+    }
+  };
+
+  const walk = (dir: string, depth: number): void => {
+    if (depth > maxDepth) return;
+    // Una carpeta con SKILL.md ES una skill: se toma entera y no se entra más.
+    if (fs.existsSync(path.join(dir, 'SKILL.md'))) {
+      add({ name: path.basename(dir), source: dir, isDir: true });
+      return;
+    }
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // carpeta ilegible: se ignora en vez de romper la importación
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full, depth + 1);
+      } else if (e.isFile() && e.name.toLowerCase().endsWith('.md')) {
+        const base = e.name.replace(/\.md$/i, '');
+        if (!NOT_A_SKILL.test(base)) add({ name: base, source: full, isDir: false });
+      }
+    }
+  };
+
+  walk(root, 0);
+  return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Skill names available in the given roots (dirs with SKILL.md, or *.md). */
 export function listSkillNames(roots: string[]): string[] {
   const names = new Set<string>();

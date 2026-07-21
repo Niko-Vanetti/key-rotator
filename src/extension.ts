@@ -13,7 +13,6 @@ import { pickNextAccount, applyRateLimit, applyRecovery } from './core/rotationE
 import { addHistoryEntry, computeStats } from './core/statsTracker.js';
 import { startHealthCheckLoop } from './monitor/rateLimitMonitor.js';
 import { StatusBarManager } from './ui/statusBar.js';
-import { AccountsTreeProvider } from './ui/accountsTreeProvider.js';
 import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
@@ -22,7 +21,7 @@ import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunne
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
 import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
 import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
-import { listSkillNames } from './agent/tools.js';
+import { listSkillNames, findSkills } from './agent/tools.js';
 import { parseSnippet, snippetHasData } from './core/snippetParser.js';
 import { analyzeViability } from './agent/aiTools.js';
 
@@ -43,12 +42,9 @@ export function activate(context: vscode.ExtensionContext) {
   const keyManager = new KeyManager(context);
   const registry = new RegistryUpdater(context);
   const statusBar = new StatusBarManager();
-  // Lista de API keys en orden ALFABÉTICO por etiqueta (= modelo).
+  // Lista de API keys en orden ALFABÉTICO por etiqueta (= modelo). Los modelos
+  // se gestionan en el Dashboard; la barra lateral solo muestra los Chats.
   const sortedMeta = () => [...keyManager.getAllMeta()].sort((a, b) => a.label.localeCompare(b.label));
-  const treeProvider = new AccountsTreeProvider(
-    () => sortedMeta(),
-    () => context.globalState.get<string>('keyRotator.preferredChatAccount')
-  );
 
   // Seed the transcript scan cache from the last run so the Chats view and
   // panel open instantly even on a cold start (no re-reading MB of jsonl).
@@ -171,7 +167,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   const sessionsProvider = new SessionsTreeProvider(() => allSessions());
 
-  vscode.window.registerTreeDataProvider('keyRotatorAccounts', treeProvider);
   vscode.window.registerTreeDataProvider('keyRotatorChats', sessionsProvider);
   context.subscriptions.push(statusBar);
 
@@ -199,7 +194,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   const refreshUI = () => {
     statusBar.update(keyManager.getAllMeta());
-    treeProvider.refresh();
     sessionsProvider.refresh();
     DashboardPanel.refreshIfOpen();
     persistScanCache();
@@ -281,6 +275,39 @@ export function activate(context: vscode.ExtensionContext) {
 
   // --- dashboard callbacks ----------------------------------------------
 
+  /**
+   * Analiza un modelo y GUARDA el veredicto en la cuenta, para que el
+   * diagnóstico quede visible junto al modelo sin volver a probarlo. Se usa
+   * tanto desde el botón "Probar" como al agregar un modelo nuevo.
+   */
+  async function runViabilityCheck(id: string): Promise<{ verdict: string; summary: string }> {
+    const meta = keyManager.getAllMeta().find((a) => a.id === id);
+    if (!meta || !isOpenAIProvider(meta.provider)) {
+      return { verdict: 'no-viable', summary: 'no es un modelo de NVIDIA Build / OpenRouter' };
+    }
+    const key = await keyManager.getApiKey(id);
+    const model = openAIModel(meta);
+    if (!key || !model) {
+      const summary = !key ? 'sin API key guardada' : 'sin modelo elegido';
+      await keyManager.updateAccountMeta(id, {
+        status: 'error',
+        lastError: summary,
+        viability: { verdict: 'no-viable', summary, at: Date.now() },
+      });
+      refreshUI();
+      return { verdict: 'no-viable', summary };
+    }
+    const report = await analyzeViability(openAIEndpoint(meta), key, model);
+    const summary = report.reasons.join(' · ');
+    await keyManager.updateAccountMeta(id, {
+      status: report.verdict === 'no-viable' ? 'error' : 'active',
+      lastError: report.verdict === 'no-viable' ? summary : undefined,
+      viability: { verdict: report.verdict, summary, at: Date.now() },
+    });
+    refreshUI();
+    return { verdict: report.verdict, summary };
+  }
+
   const dashboardCallbacks: DashboardCallbacks = {
     getState: () => ({
       accounts: sortedMeta(),
@@ -296,24 +323,7 @@ export function activate(context: vscode.ExtensionContext) {
       refreshUI();
     },
     // Botón "Probar" del Dashboard: análisis de viabilidad real del modelo.
-    testModel: async (id: string) => {
-      const meta = keyManager.getAllMeta().find((a) => a.id === id);
-      if (!meta || !isOpenAIProvider(meta.provider)) {
-        return { verdict: 'no-viable', summary: 'no es un modelo de NVIDIA Build / OpenRouter' };
-      }
-      const key = await keyManager.getApiKey(id);
-      const model = openAIModel(meta);
-      if (!key || !model) {
-        return { verdict: 'no-viable', summary: !key ? 'sin API key guardada' : 'sin modelo elegido' };
-      }
-      const report = await analyzeViability(openAIEndpoint(meta), key, model);
-      await keyManager.updateAccountMeta(id, {
-        status: report.verdict === 'no-viable' ? 'error' : 'active',
-        lastError: report.verdict === 'no-viable' ? report.reasons.join(' · ') : undefined,
-      });
-      refreshUI();
-      return { verdict: report.verdict, summary: report.reasons.join(' · ') };
-    },
+    testModel: (id: string) => runViabilityCheck(id),
     toggleSwitchMode: async (id: string) => {
       const account = keyManager.getAllMeta().find((a) => a.id === id);
       if (!account) return;
@@ -482,6 +492,51 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
       return `${n} skill(s) copiadas desde Claude a la biblioteca de KeyRotator.`;
+    },
+    /**
+     * Importa TODAS las skills que haya en una carpeta (un repo entero, con
+     * subcarpetas): cada carpeta con SKILL.md se copia completa y cada .md
+     * suelto se registra como skill.
+     */
+    importSkillsFrom: async (dir?: string) => {
+      let target = dir;
+      if (!target) {
+        const picked = await vscode.window.showOpenDialog({
+          canSelectFolders: true,
+          canSelectFiles: false,
+          canSelectMany: false,
+          openLabel: 'Importar skills de esta carpeta',
+        });
+        target = picked?.[0]?.fsPath;
+      }
+      if (!target) return '';
+      if (!fs.existsSync(target)) return `no existe la ruta "${target}".`;
+      // Si soltaron un archivo, se importa desde su carpeta contenedora.
+      if (!fs.statSync(target).isDirectory()) target = path.dirname(target);
+      ensureConfigDirs();
+      const skills = findSkills(target);
+      if (skills.length === 0) {
+        return `no encontré skills en "${path.basename(target)}" (busco subcarpetas con SKILL.md o archivos .md).`;
+      }
+      let ok = 0;
+      const failed: string[] = [];
+      for (const s of skills) {
+        const clean = s.name.replace(/[^\w.-]+/g, '-');
+        try {
+          if (s.isDir) {
+            fs.cpSync(s.source, path.join(krSkillsDir, clean), { recursive: true });
+          } else {
+            fs.mkdirSync(path.join(krSkillsDir, clean), { recursive: true });
+            fs.copyFileSync(s.source, path.join(krSkillsDir, clean, 'SKILL.md'));
+          }
+          ok++;
+        } catch {
+          failed.push(s.name);
+        }
+      }
+      return failed.length
+        ? `${ok} skill(s) importadas. No pude copiar: ${failed.join(', ')}.`
+        : `${ok} skill(s) importadas desde "${path.basename(target)}".`;
     },
   };
 
@@ -674,6 +729,16 @@ export function activate(context: vscode.ExtensionContext) {
       .filter(Boolean)
       .join(' · ');
     void vscode.window.showInformationMessage(`KeyRotator: listo — ${resumen}. Abriendo el chat…`);
+    // Diagnóstico automático en segundo plano: así el modelo ya aparece con su
+    // veredicto y el usuario no tiene que pulsar "Probar" en cada uno.
+    if (parsed.model) {
+      void runViabilityCheck(id).then((v) => {
+        DashboardPanel.refreshIfOpen();
+        if (v.verdict === 'no-viable') {
+          void vscode.window.showWarningMessage(`KeyRotator: ⛔ ${label} — ${v.summary}`);
+        }
+      });
+    }
     await vscode.commands.executeCommand('keyRotator.openChat');
     return { ok: true, summary: `${resumen} ✓` };
   }

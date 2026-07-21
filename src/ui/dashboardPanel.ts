@@ -31,6 +31,8 @@ export interface DashboardCallbacks {
   deleteSkill(name: string): Promise<void>;
   editSkill(name: string): Promise<void>;
   syncSkillsFromClaude(): Promise<string>;
+  /** Importa todas las skills de una carpeta (repo con subcarpetas). Sin `dir`, pregunta. */
+  importSkillsFrom(dir?: string): Promise<string>;
   /** Agency director: 'auto' or a model id. */
   getDirector(): string;
   setDirector(value: string): Promise<void>;
@@ -45,6 +47,7 @@ interface IncomingMessage {
   label?: string;
   name?: string;
   value?: string;
+  paths?: string[];
   account?: {
     label: string;
     apiKey: string;
@@ -197,6 +200,24 @@ export class DashboardPanel {
       case 'syncSkills': {
         const summary = await this.callbacks.syncSkillsFromClaude();
         vscode.window.showInformationMessage(`KeyRotator: ${summary}`);
+        this.postState();
+        break;
+      }
+      case 'importSkills': {
+        // `paths` llega cuando se arrastró una carpeta (como URI file://);
+        // sin él, se abre el selector de carpetas.
+        const resolved = (msg.paths ?? []).map((p) => {
+          try {
+            return p.startsWith('file:') ? vscode.Uri.parse(p).fsPath : p;
+          } catch {
+            return p;
+          }
+        });
+        const dirs: (string | undefined)[] = resolved.length ? resolved : [undefined];
+        for (const d of dirs) {
+          const summary = await this.callbacks.importSkillsFrom(d);
+          if (summary) vscode.window.showInformationMessage(`KeyRotator: ${summary}`);
+        }
         this.postState();
         break;
       }
