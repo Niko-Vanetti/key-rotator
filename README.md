@@ -17,6 +17,36 @@ npm run package
 code --install-extension key-rotator-0.1.0.vsix
 ```
 
+Después de instalar, recarga la ventana de VS Code (`Ctrl+Shift+P` →
+**Developer: Reload Window**) para que la extensión quede activa.
+
+## Actualizar a la última versión
+
+Si ya tienes KeyRotator instalado y quieres traerte los cambios nuevos:
+
+```bash
+git pull                 # trae los cambios del repositorio
+npm install              # solo hace falta si cambiaron las dependencias
+npm run package          # regenera el .vsix
+code --install-extension key-rotator-0.1.0.vsix
+```
+
+Luego **recarga la ventana** (`Ctrl+Shift+P` → **Developer: Reload Window**). Este
+paso no es opcional: VS Code mantiene en memoria la versión anterior hasta que
+recargas, así que sin él parecerá que la actualización no hizo nada.
+
+Notas:
+
+- No hace falta desinstalar primero ni pasar `--force`: instalar el `.vsix` sobrescribe
+  la versión anterior aunque el número de versión no haya cambiado.
+- **No pierdes nada al actualizar.** Tus API keys siguen en el Secret Storage de VS
+  Code, la configuración y el estado de los modelos en el almacenamiento de la
+  extensión, y tus conversaciones, carpeta de trabajo, MCP y Skills en las carpetas
+  `Documents\KeyRotator*`. Actualizar solo reemplaza el código de la extensión.
+- Si algo se comporta raro después de actualizar, cierra VS Code por completo y vuelve
+  a abrirlo (una recarga de ventana no reinicia los procesos que la extensión haya
+  dejado corriendo).
+
 ## Primeros pasos
 
 1. Abre el panel **KeyRotator** en la barra de actividad (ícono de llave).
