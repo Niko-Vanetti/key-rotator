@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { ChatSession, type ChatBackend } from '../chat/chatSession.js';
 
 interface IncomingMessage {
@@ -10,6 +12,9 @@ interface IncomingMessage {
   on?: boolean;
   paths?: string[];
   research?: boolean;
+  data?: string;
+  mime?: string;
+  name?: string;
 }
 
 /**
@@ -349,6 +354,26 @@ export class ChatPanel {
         }
         break;
       }
+      // ----- imagen pegada (Ctrl+V) o arrastrada sin ruta -----
+      // El portapapeles entrega bytes, no una ruta: se guardan en un archivo
+      // temporal para poder adjuntarlo como cualquier otra imagen.
+      case 'pasteImage': {
+        if (!msg.data) break;
+        try {
+          const ext = (msg.mime ?? 'image/png').split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
+          const dir = path.join(os.tmpdir(), 'keyrotator-pegadas');
+          fs.mkdirSync(dir, { recursive: true });
+          const name = msg.name && /\.[a-z0-9]+$/i.test(msg.name) ? msg.name : `imagen-${Date.now()}.${ext}`;
+          const file = path.join(dir, name.replace(/[^\w.-]+/g, '_'));
+          fs.writeFileSync(file, Buffer.from(msg.data, 'base64'));
+          this.pendingWebFiles.push(file);
+          this.post({ type: 'webAttach', name: path.basename(file), path: file });
+        } catch (e) {
+          this.post({ type: 'info', text: `No pude guardar la imagen pegada: ${(e as Error).message}` });
+        }
+        break;
+      }
+
       // ----- arrastrar y soltar sobre el chat -----
       case 'dropFiles': {
         const paths = (msg.paths ?? [])

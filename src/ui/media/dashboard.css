@@ -46,6 +46,7 @@ body {
 .account-card .verdict.recomendado { color: var(--vscode-charts-green); }
 .account-card .verdict.usable { color: var(--vscode-charts-yellow); }
 .account-card .verdict.no-viable { color: var(--vscode-charts-red); }
+.account-card .verdict.no-concluyente { color: var(--vscode-descriptionForeground); }
 .actions button:disabled { opacity: 0.5; cursor: default; }
 
 .drop-zone {

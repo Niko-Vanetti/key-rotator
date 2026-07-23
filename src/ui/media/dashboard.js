@@ -38,7 +38,7 @@ function renderAccounts(accounts) {
   }
 
   // El MODELO, su veredicto de viabilidad GUARDADO y las acciones.
-  const ICON = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔' };
+  const ICON = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔', 'no-concluyente': '❔' };
   for (const acc of accounts) {
     const v = acc.viability;
     const text = v ? `${ICON[v.verdict] || ''} ${v.verdict}: ${v.summary}` : 'sin probar todavía';
@@ -75,8 +75,8 @@ function renderAccounts(accounts) {
 function showVerdict(msg) {
   const v = document.getElementById('verdict-' + msg.id);
   if (v) {
-    const icon = msg.verdict === 'recomendado' ? '✅' : msg.verdict === 'usable' ? '⚠️' : '⛔';
-    v.textContent = `${icon} ${msg.verdict}: ${msg.summary}`;
+    const icons = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔', 'no-concluyente': '❔' };
+    v.textContent = `${icons[msg.verdict] || ''} ${msg.verdict}: ${msg.summary}`;
     v.className = 'sub verdict ' + msg.verdict;
   }
   const btn = document.querySelector('button[data-action="test"][data-id="' + msg.id + '"]');

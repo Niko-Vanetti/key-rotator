@@ -377,6 +377,28 @@
     });
   }
 
+  // ---------- pegar una imagen con Ctrl+V ----------
+  // El portapapeles trae la imagen como bytes (no como ruta), así que se manda
+  // en base64 y el host la guarda en un archivo temporal para adjuntarla.
+  inputEl.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind !== 'file' || !it.type.startsWith('image/')) continue;
+      const file = it.getAsFile();
+      if (!file) continue;
+      e.preventDefault(); // no pegar también la basura de texto del portapapeles
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '');
+        const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+        vscode.postMessage({ type: 'pasteImage', data: b64, mime: file.type, name: file.name || '' });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  });
+
   // ---------- arrastrar y soltar archivos sobre el chat ----------
   // VS Code entrega rutas por 'text/uri-list' (explorador u SO); File.path es
   // el respaldo. El host convierte las URIs a rutas reales y las adjunta.
@@ -413,11 +435,29 @@
     if (items.length === 0 && dt.files && dt.files.length) {
       for (const f of dt.files) if (f.path) items.push(f.path);
     }
-    if (items.length === 0) {
-      addNotice('info', 'No pude leer la ruta del archivo soltado. Usa el botón ＋ para adjuntarlo.');
+    if (items.length > 0) {
+      vscode.postMessage({ type: 'dropFiles', paths: items });
       return;
     }
-    vscode.postMessage({ type: 'dropFiles', paths: items });
+    // Sin ruta (imagen arrastrada del navegador o de otra app): van los bytes.
+    const imgs = [...(dt.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (imgs.length > 0) {
+      for (const f of imgs) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || '');
+          vscode.postMessage({
+            type: 'pasteImage',
+            data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+            mime: f.type,
+            name: f.name || '',
+          });
+        };
+        reader.readAsDataURL(f);
+      }
+      return;
+    }
+    addNotice('info', 'No pude leer lo que soltaste. Usa el botón ＋ para adjuntarlo.');
   });
   modelSelect.addEventListener('change', () => vscode.postMessage({ type: 'setModel', value: modelSelect.value }));
   effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));

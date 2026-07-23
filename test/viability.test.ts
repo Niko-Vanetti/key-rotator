@@ -108,7 +108,7 @@ test('analyzeViability: modelo sano → recomendado en 3 peticiones', async () =
   }
 });
 
-test('analyzeViability: modelo muerto → no-viable, sin llegar a probar herramientas', async () => {
+test('analyzeViability: solo timeouts → no-concluyente (reintenta antes de juzgar)', async () => {
   const realFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = (async () => {
@@ -116,10 +116,27 @@ test('analyzeViability: modelo muerto → no-viable, sin llegar a probar herrami
     throw new Error('The operation was aborted due to timeout');
   }) as typeof fetch;
   try {
-    const r = await analyzeViability('https://x.test/v1', 'k', 'google/gemma-4-31b-it');
-    assert.equal(calls, 2, 'no debe gastar la 3ra petición si nunca respondió');
-    assert.equal(r.verdict, 'no-viable');
+    const r = await analyzeViability('https://x.test/v1', 'k'.repeat(20), 'google/gemma-4-31b-it');
+    // 2 pruebas × (intento + reintento) = 4; nunca se prueba herramientas.
+    assert.equal(calls, 4, 'cada prueba reintenta una vez ante un fallo transitorio');
+    assert.equal(r.verdict, 'no-concluyente', 'un timeout no basta para condenar al modelo');
     assert.equal(r.supportsTools, null);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('analyzeViability: modelo realmente inválido (404) → no-viable sin reintentar', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Response('{"detail":"Not Found"}', { status: 404 });
+  }) as typeof fetch;
+  try {
+    const r = await analyzeViability('https://x.test/v1', 'k'.repeat(20), 'modelo/inexistente');
+    assert.equal(calls, 2, 'un 404 real no se reintenta');
+    assert.equal(r.verdict, 'no-viable');
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -198,5 +215,60 @@ test('findSkills devuelve vacío en una carpeta sin skills', async () => {
     assert.deepEqual(findSkills(root), []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- fiabilidad: el proveedor saturado NO es culpa del modelo --------------
+
+test('todos los fallos transitorios (429/5xx/timeout) → no-concluyente, NO no-viable', () => {
+  // El caso real: el mismo modelo salía "recomendado" y "no viable" en pruebas
+  // distintas porque probar varios seguidos generaba 429 propios.
+  const r = judgeViability({
+    attempts: 2,
+    successes: 0,
+    latencyMs: null,
+    supportsTools: null,
+    transientFailures: 2,
+    lastFailure: 'HTTP 429: Too Many Requests',
+  });
+  assert.equal(r.verdict, 'no-concluyente');
+  assert.match(r.reasons[0], /NO significa que el modelo esté mal/);
+  assert.match(r.reasons[0], /429/);
+});
+
+test('un fallo real (404) sí da no-viable aunque el otro fuera transitorio', () => {
+  const r = judgeViability({
+    attempts: 2,
+    successes: 0,
+    latencyMs: null,
+    supportsTools: null,
+    transientFailures: 1,
+    lastFailure: 'HTTP 404: modelo no habilitado',
+  });
+  assert.equal(r.verdict, 'no-viable');
+  assert.match(r.reasons[0], /404/);
+});
+
+test('sin datos de transitoriedad se mantiene el veredicto duro (compatibilidad)', () => {
+  const r = judgeViability({ attempts: 2, successes: 0, latencyMs: null, supportsTools: null });
+  assert.equal(r.verdict, 'no-viable');
+});
+
+test('pingModel marca 429 y 5xx como transitorios, y 404 como real', async () => {
+  const { pingModel } = await import('../src/agent/aiTools.js');
+  const realFetch = globalThis.fetch;
+  const withStatus = (status: number, body = '{}') => {
+    globalThis.fetch = (async () => new Response(body, { status })) as typeof fetch;
+    return pingModel('https://x.test/v1', 'k'.repeat(20), 'm');
+  };
+  try {
+    assert.equal((await withStatus(429)).transient, true, '429 = límite, no culpa del modelo');
+    assert.equal((await withStatus(500)).transient, true, '5xx = caída momentánea');
+    assert.equal((await withStatus(404, '{"detail":"Not Found"}')).transient, false, '404 real = modelo inválido');
+    // El 404 "Not found for account" de NVIDIA sí es intermitente (comprobado).
+    const nv = await withStatus(404, '{"detail":"Function \'x\': Not found for account \'y\'"}');
+    assert.equal(nv.transient, true);
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });

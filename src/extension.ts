@@ -299,6 +299,8 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const report = await analyzeViability(openAIEndpoint(meta), key, model);
     const summary = report.reasons.join(' · ');
+    // 'no-concluyente' NO condena al modelo (fue el proveedor, no él): la
+    // cuenta sigue activa y se puede volver a probar.
     await keyManager.updateAccountMeta(id, {
       status: report.verdict === 'no-viable' ? 'error' : 'active',
       lastError: report.verdict === 'no-viable' ? summary : undefined,

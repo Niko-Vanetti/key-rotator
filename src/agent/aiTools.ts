@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { waitForSlot } from '../chat/openaiChat.js';
 
 /**
  * "AI-grade" tools beyond the filesystem: web fetch, web search, image
@@ -272,12 +273,31 @@ export function imageToDataUrl(file: string): string | null {
  * verdad. Comprobado en vivo que `/v1/models` NO sirve para esto — lista
  * modelos que luego dan 404 «Not found for account» o que no contestan nunca.
  */
+export interface PingResult {
+  ok: boolean;
+  ms: number;
+  detail: string;
+  /**
+   * true = el fallo NO dice nada del modelo: límite de peticiones (429), caída
+   * momentánea del gateway (5xx) o timeout de un arranque en frío. Sin esta
+   * distinción, probar varios modelos seguidos generaba 429 propios y el mismo
+   * modelo salía "recomendado" y "no viable" en pruebas distintas.
+   */
+  transient?: boolean;
+}
+
+/** Espera de cortesía entre intentos de prueba (backoff simple). */
+const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export async function pingModel(
   endpoint: string,
   apiKey: string,
   model: string,
-  timeoutMs = 25_000
-): Promise<{ ok: boolean; ms: number; detail: string }> {
+  timeoutMs = 60_000
+): Promise<PingResult> {
+  // Mismo carril de 35 rpm que usa el chat: las pruebas ya no se pisan entre
+  // sí ni con las conversaciones en curso.
+  await waitForSlot(`nvidia:${apiKey.slice(-8)}`, 35);
   const t0 = Date.now();
   try {
     const res = await fetch(endpoint.replace(/\/+$/, '') + '/chat/completions', {
@@ -300,7 +320,8 @@ export async function pingModel(
       } catch {
         /* texto crudo */
       }
-      return { ok: false, ms, detail: `HTTP ${res.status}: ${detail}` };
+      const transient = res.status === 429 || res.status >= 500 || /not found for account/i.test(body);
+      return { ok: false, ms, detail: `HTTP ${res.status}: ${detail}`, transient };
     }
     const j = JSON.parse(body) as {
       choices?: { message?: { content?: string; reasoning_content?: string } }[];
@@ -309,17 +330,26 @@ export async function pingModel(
     const text = (m?.content || m?.reasoning_content || '').trim();
     return text
       ? { ok: true, ms, detail: `responde en ${(ms / 1000).toFixed(1)}s` }
-      : { ok: false, ms, detail: 'respondió vacío (quizá no soporta herramientas)' };
+      : { ok: false, ms, detail: 'respondió vacío' };
   } catch (e) {
     const ms = Date.now() - t0;
+    const isTimeout = /abort|timeout/i.test((e as Error).message);
     return {
       ok: false,
       ms,
-      detail: /abort|timeout/i.test((e as Error).message)
-        ? `sin respuesta en ${Math.round(ms / 1000)}s — modelo caído o no disponible para tu cuenta`
-        : (e as Error).message,
+      // Un timeout puede ser arranque en frío del modelo, no que esté muerto.
+      transient: isTimeout,
+      detail: isTimeout ? `sin respuesta en ${Math.round(ms / 1000)}s` : (e as Error).message,
     };
   }
+}
+
+/** Prueba con reintento: un fallo transitorio no condena al modelo. */
+async function pingWithRetry(endpoint: string, apiKey: string, model: string): Promise<PingResult> {
+  const first = await pingModel(endpoint, apiKey, model);
+  if (first.ok || !first.transient) return first;
+  await sleepMs(3000);
+  return pingModel(endpoint, apiKey, model);
 }
 
 // ---------------------------------------------------------------------------
@@ -336,9 +366,17 @@ export interface ViabilityFacts {
   latencyMs: number | null;
   /** null = no se pudo probar (el modelo ni respondía a lo básico). */
   supportsTools: boolean | null;
+  /**
+   * Fallos que no dicen nada del modelo (429 del proveedor, 5xx, arranque en
+   * frío). Si TODOS los fallos fueron así, el resultado es "no concluyente":
+   * declarar "no viable" sería mentir.
+   */
+  transientFailures?: number;
+  /** Detalle del último fallo, para explicarle al usuario qué pasó. */
+  lastFailure?: string;
 }
 
-export type ViabilityVerdict = 'recomendado' | 'usable' | 'no-viable';
+export type ViabilityVerdict = 'recomendado' | 'usable' | 'no-viable' | 'no-concluyente';
 
 export interface ViabilityReport extends ViabilityFacts {
   verdict: ViabilityVerdict;
@@ -351,12 +389,23 @@ const VERY_SLOW_MS = 40_000;
 /** Decide el veredicto a partir de hechos ya medidos (pura, sin red — tested). */
 export function judgeViability(facts: ViabilityFacts): { verdict: ViabilityVerdict; reasons: string[] } {
   if (facts.successes === 0) {
+    const failures = facts.attempts;
+    const transient = facts.transientFailures ?? 0;
+    const detail = facts.lastFailure ? ` (${facts.lastFailure})` : '';
+    // Si todos los fallos fueron transitorios, el modelo NO está descartado:
+    // el proveedor estaba saturado o el modelo arrancando en frío.
+    if (transient >= failures) {
+      return {
+        verdict: 'no-concluyente',
+        reasons: [
+          `no se pudo comprobar: el proveedor no respondió a tiempo o rechazó por límite de peticiones${detail}. Vuelve a intentarlo en un momento — esto NO significa que el modelo esté mal.`,
+        ],
+      };
+    }
     return {
       verdict: 'no-viable',
       reasons: [
-        facts.attempts > 1
-          ? `no respondió ninguna de las ${facts.attempts} veces que se probó — está caído o no disponible para tu cuenta`
-          : 'no respondió — está caído o no disponible para tu cuenta',
+        `no respondió ninguna de las ${failures} veces que se probó${detail} — está caído o no disponible para tu cuenta`,
       ],
     };
   }
@@ -388,8 +437,9 @@ export async function pingToolCalling(
   endpoint: string,
   apiKey: string,
   model: string,
-  timeoutMs = 30_000
+  timeoutMs = 45_000
 ): Promise<boolean> {
+  await waitForSlot(`nvidia:${apiKey.slice(-8)}`, 35);
   try {
     const res = await fetch(endpoint.replace(/\/+$/, '') + '/chat/completions', {
       method: 'POST',
@@ -422,14 +472,23 @@ export async function pingToolCalling(
  * respondió, comprueba si sabe usar herramientas. 3 peticiones como mucho.
  */
 export async function analyzeViability(endpoint: string, apiKey: string, model: string): Promise<ViabilityReport> {
-  const p1 = await pingModel(endpoint, apiKey, model);
-  const p2 = await pingModel(endpoint, apiKey, model);
-  const successes = [p1, p2].filter((p) => p.ok).length;
+  const p1 = await pingWithRetry(endpoint, apiKey, model);
+  const p2 = await pingWithRetry(endpoint, apiKey, model);
+  const pings = [p1, p2];
+  const successes = pings.filter((p) => p.ok).length;
   const latencyMs = p1.ok ? p1.ms : p2.ok ? p2.ms : null;
+  const failures = pings.filter((p) => !p.ok);
 
   const supportsTools = successes > 0 ? await pingToolCalling(endpoint, apiKey, model) : null;
 
-  const facts: ViabilityFacts = { attempts: 2, successes, latencyMs, supportsTools };
+  const facts: ViabilityFacts = {
+    attempts: 2,
+    successes,
+    latencyMs,
+    supportsTools,
+    transientFailures: failures.filter((p) => p.transient).length,
+    lastFailure: failures[failures.length - 1]?.detail,
+  };
   const { verdict, reasons } = judgeViability(facts);
   return { ...facts, verdict, reasons };
 }
