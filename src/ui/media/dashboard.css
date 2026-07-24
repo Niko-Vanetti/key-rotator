@@ -2,10 +2,15 @@ body {
   font-family: var(--vscode-font-family);
   color: var(--vscode-foreground);
   padding: 0 16px;
+  /* Nada debe empujar el ancho de la página fuera del panel. */
+  overflow-x: hidden;
 }
+* { box-sizing: border-box; }
+img, textarea, input, select { max-width: 100%; }
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   border-bottom: 1px solid var(--vscode-panel-border);
   margin-bottom: 16px;
@@ -34,14 +39,16 @@ body {
   padding: 12px;
   margin-bottom: 8px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 12px;
 }
 
-.account-card .meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.account-card .label { font-weight: 600; }
-.account-card .sub { font-size: 0.85em; opacity: 0.75; }
+.account-card .meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 200px; }
+.account-card .label { font-weight: 600; overflow-wrap: anywhere; }
+.account-card .sub { font-size: 0.85em; opacity: 0.75; overflow-wrap: anywhere; }
+.account-card .actions { flex: 0 0 auto; }
 .account-card .verdict { opacity: 1; }
 .account-card .verdict.recomendado { color: var(--vscode-charts-green); }
 .account-card .verdict.usable { color: var(--vscode-charts-yellow); }
@@ -92,6 +99,8 @@ body {
 
 .actions button:hover { background: var(--vscode-button-secondaryHoverBackground); }
 
+/* La tabla del historial scrollea dentro de su propia caja, no en la página. */
+#historyTable { display: block; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 0.9em; }
 
@@ -110,7 +119,8 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vsco
   padding: 12px;
   margin-bottom: 16px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Columnas que se colapsan a una sola cuando no caben (panel estrecho). */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
 }
 .section-head {
@@ -123,8 +133,9 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vsco
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);
   border: 1px solid var(--vscode-dropdown-border, transparent);
-  padding: 5px 8px; border-radius: 4px; min-width: 240px;
+  padding: 5px 8px; border-radius: 4px; min-width: 180px; max-width: 100%;
 }
+.section-head span { display: flex; flex-wrap: wrap; gap: 6px; }
 .section-head button {
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #fff);

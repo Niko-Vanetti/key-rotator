@@ -4,33 +4,37 @@ body {
   color: var(--vscode-foreground);
   background: var(--vscode-editor-background);
   height: 100vh;
+  overflow-x: hidden; /* la página nunca scrollea de lado */
 }
+* { box-sizing: border-box; }
 .hidden { display: none !important; }
 
 .chat { display: flex; flex-direction: column; height: 100vh; }
 
 /* ---------- Header ---------- */
 .chat-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px 12px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--vscode-panel-border);
-  flex: 0 0 auto;
+  flex: 0 0 auto; flex-wrap: wrap;
 }
-.chat-header .title { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.chat-header .title { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; flex: 1 1 auto; }
 .chat-header .title #chatTitle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-charts-green, #4caf50); flex: 0 0 auto; }
 
-.acct-wrap { position: relative; flex: 0 0 auto; }
+.acct-wrap { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; }
 .acct-btn {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
   background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
   border: none; border-radius: 12px; padding: 3px 10px; cursor: pointer; font-size: 12px;
 }
+.acct-btn #activeAccount { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-btn:hover { filter: brightness(1.1); }
 
 /* ---------- Menus (account / plus) ---------- */
 .menu {
   position: absolute; right: 0; top: 110%;
-  min-width: 200px; z-index: 30;
+  min-width: 200px; max-width: min(320px, 90vw); z-index: 30;
   background: var(--vscode-menu-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
   border-radius: 8px; padding: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
@@ -102,7 +106,8 @@ body {
 
 /* ---------- Composer + bottom bar ---------- */
 .composer-wrap { flex: 0 0 auto; border-top: 1px solid var(--vscode-panel-border); position: relative; }
-.composer { display: flex; gap: 8px; padding: 10px 14px 6px; align-items: flex-end; position: relative; }
+.composer { display: flex; gap: 8px; padding: 10px 14px 6px; align-items: flex-end; position: relative; min-width: 0; }
+#input { min-width: 0; } /* el textarea puede encoger; no fuerza el ancho */
 .plus-btn {
   flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
   background: transparent; color: var(--vscode-foreground);
@@ -123,17 +128,19 @@ body {
 #sendBtn:hover { background: var(--vscode-button-hoverBackground); }
 #sendBtn:disabled { opacity: 0.5; cursor: default; }
 
-.bottom-bar { display: flex; align-items: center; gap: 12px; padding: 2px 14px 10px; }
-.ctl { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+/* La barra inferior se reacomoda cuando el panel se estrecha (flex-wrap). */
+.bottom-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 4px 14px 10px; }
+.ctl { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--vscode-descriptionForeground); min-width: 0; }
 .ctl select {
-  font-size: 12px; padding: 3px 6px; border-radius: 6px;
+  font-size: 12px; padding: 3px 6px; border-radius: 6px; max-width: 100%;
   background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground);
   border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); outline: none;
 }
-.spacer { flex: 1 1 auto; }
-.model-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-panel-border); white-space: nowrap; }
-.ctl-group { display: flex; align-items: center; gap: 12px; }
-.toggles { display: flex; align-items: center; gap: 6px; }
+/* El espaciador empuja los badges a la derecha, pero cede al envolver. */
+.spacer { flex: 1 1 auto; min-width: 0; }
+.model-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-panel-border); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ctl-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+.toggles { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .toggle-chip {
   font-size: 11px; padding: 3px 9px; border-radius: 12px; cursor: pointer;
   background: transparent; color: var(--vscode-descriptionForeground);
