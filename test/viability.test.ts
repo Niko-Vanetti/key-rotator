@@ -272,3 +272,76 @@ test('pingModel marca 429 y 5xx como transitorios, y 404 como real', async () =>
     globalThis.fetch = realFetch;
   }
 });
+
+// ---- diagnósticos precisos (casos reales de la cuenta del usuario) ---------
+
+test('modelo que responde sin texto = NO es de chat (diffusiongemma), no "caído"', () => {
+  const r = judgeViability({
+    attempts: 2,
+    successes: 0,
+    latencyMs: null,
+    supportsTools: null,
+    transientFailures: 0,
+    lastFailure: 'respondió sin texto',
+    failureKinds: ['empty', 'empty'],
+  });
+  assert.equal(r.verdict, 'no-viable');
+  assert.match(r.reasons[0], /no es un modelo de chat/);
+  assert.match(r.reasons[0], /imágenes, embeddings o reranking/);
+  // El mensaje viejo mentía: el modelo SÍ responde, solo que sin texto.
+  assert.doesNotMatch(r.reasons[0], /caído/);
+});
+
+test('404 "not found for account" persistente = no habilitado, con la acción a tomar', () => {
+  const r = judgeViability({
+    attempts: 2,
+    successes: 0,
+    latencyMs: null,
+    supportsTools: null,
+    transientFailures: 2,
+    lastFailure: "HTTP 404: Function 'x': Not found for account 'y'",
+    failureKinds: ['not-enabled', 'not-enabled'],
+  });
+  assert.equal(r.verdict, 'no-viable');
+  assert.match(r.reasons[0], /no tiene habilitado este modelo/);
+  assert.match(r.reasons[0], /Get API Key/);
+  // Ya no dice "vuelve a intentarlo": reintentar no lo va a arreglar.
+  assert.doesNotMatch(r.reasons[0], /Vuelve a intentarlo/);
+});
+
+test('un 429 mezclado con otro fallo sigue siendo no-concluyente', () => {
+  const r = judgeViability({
+    attempts: 2,
+    successes: 0,
+    latencyMs: null,
+    supportsTools: null,
+    transientFailures: 2,
+    lastFailure: 'HTTP 429',
+    failureKinds: ['rate-limit', 'timeout'],
+  });
+  assert.equal(r.verdict, 'no-concluyente');
+});
+
+test('pingModel clasifica cada tipo de fallo', async () => {
+  const { pingModel } = await import('../src/agent/aiTools.js');
+  const realFetch = globalThis.fetch;
+  const probe = (status: number, body: string) => {
+    globalThis.fetch = (async () => new Response(body, { status })) as typeof fetch;
+    return pingModel('https://x.test/v1', 'k'.repeat(20), 'm');
+  };
+  try {
+    assert.equal((await probe(429, '{}')).kind, 'rate-limit');
+    assert.equal((await probe(500, '{}')).kind, 'server');
+    assert.equal((await probe(404, '{"detail":"Not Found"}')).kind, 'invalid');
+    assert.equal((await probe(404, '{"detail":"Function \'a\': Not found for account \'b\'"}')).kind, 'not-enabled');
+    // 200 con respuesta vacía = modelo que no es de chat.
+    const empty = await probe(200, JSON.stringify({ choices: [{ message: { content: '' } }] }));
+    assert.equal(empty.kind, 'empty');
+    assert.equal(empty.transient, undefined, 'vacío NO se reintenta: no va a cambiar');
+    const ok = await probe(200, JSON.stringify({ choices: [{ message: { content: 'PONG' } }] }));
+    assert.equal(ok.kind, 'ok');
+    assert.equal(ok.ok, true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

@@ -273,18 +273,32 @@ export function imageToDataUrl(file: string): string | null {
  * verdad. Comprobado en vivo que `/v1/models` NO sirve para esto — lista
  * modelos que luego dan 404 «Not found for account» o que no contestan nunca.
  */
+/** Qué pasó exactamente en una prueba, para poder explicarlo con precisión. */
+export type PingKind =
+  | 'ok'
+  | 'rate-limit' // 429: límite del proveedor, no del modelo
+  | 'server' // 5xx: caída momentánea del gateway
+  | 'timeout' // puede ser arranque en frío
+  | 'not-enabled' // 404 "Not found for account": la cuenta no lo tiene activo
+  | 'empty' // responde 200 pero sin texto: no es un modelo de chat
+  | 'invalid' // 404/401/400 reales
+  | 'network';
+
 export interface PingResult {
   ok: boolean;
   ms: number;
   detail: string;
+  kind: PingKind;
   /**
-   * true = el fallo NO dice nada del modelo: límite de peticiones (429), caída
-   * momentánea del gateway (5xx) o timeout de un arranque en frío. Sin esta
+   * true = vale la pena reintentar; el fallo NO dice nada del modelo. Sin esta
    * distinción, probar varios modelos seguidos generaba 429 propios y el mismo
    * modelo salía "recomendado" y "no viable" en pruebas distintas.
    */
   transient?: boolean;
 }
+
+/** Fallos que se reintentan (y que, si persisten, se explican aparte). */
+const RETRYABLE: PingKind[] = ['rate-limit', 'server', 'timeout', 'not-enabled', 'network'];
 
 /** Espera de cortesía entre intentos de prueba (backoff simple). */
 const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -320,36 +334,54 @@ export async function pingModel(
       } catch {
         /* texto crudo */
       }
-      const transient = res.status === 429 || res.status >= 500 || /not found for account/i.test(body);
-      return { ok: false, ms, detail: `HTTP ${res.status}: ${detail}`, transient };
+      const kind: PingKind = /not found for account/i.test(body)
+        ? 'not-enabled'
+        : res.status === 429
+          ? 'rate-limit'
+          : res.status >= 500
+            ? 'server'
+            : 'invalid';
+      return { ok: false, ms, kind, detail: `HTTP ${res.status}: ${detail}`, transient: RETRYABLE.includes(kind) };
     }
     const j = JSON.parse(body) as {
       choices?: { message?: { content?: string; reasoning_content?: string } }[];
     };
     const m = j.choices?.[0]?.message;
     const text = (m?.content || m?.reasoning_content || '').trim();
+    // Responder 200 pero sin texto = no es un modelo de chat (difusión de
+    // imágenes, embeddings, reranking…). No está "caído": es de otro tipo.
     return text
-      ? { ok: true, ms, detail: `responde en ${(ms / 1000).toFixed(1)}s` }
-      : { ok: false, ms, detail: 'respondió vacío' };
+      ? { ok: true, ms, kind: 'ok', detail: `responde en ${(ms / 1000).toFixed(1)}s` }
+      : { ok: false, ms, kind: 'empty', detail: 'respondió sin texto' };
   } catch (e) {
     const ms = Date.now() - t0;
     const isTimeout = /abort|timeout/i.test((e as Error).message);
+    const kind: PingKind = isTimeout ? 'timeout' : 'network';
     return {
       ok: false,
       ms,
+      kind,
       // Un timeout puede ser arranque en frío del modelo, no que esté muerto.
-      transient: isTimeout,
+      transient: true,
       detail: isTimeout ? `sin respuesta en ${Math.round(ms / 1000)}s` : (e as Error).message,
     };
   }
 }
 
-/** Prueba con reintento: un fallo transitorio no condena al modelo. */
+/**
+ * Prueba con reintento: un fallo transitorio no condena al modelo. Incluye el
+ * 404 "Not found for account" porque se comprobó que parpadea (deepseek-v4-pro
+ * lo dio y respondió bien segundos después); si persiste tras el reintento, el
+ * veredicto lo trata como "no habilitado" y no como un parpadeo.
+ */
 async function pingWithRetry(endpoint: string, apiKey: string, model: string): Promise<PingResult> {
   const first = await pingModel(endpoint, apiKey, model);
   if (first.ok || !first.transient) return first;
   await sleepMs(3000);
-  return pingModel(endpoint, apiKey, model);
+  const second = await pingModel(endpoint, apiKey, model);
+  // Si el reintento falla distinto, se conserva el fallo del reintento (es el
+  // más reciente); lo importante es no perder el tipo para explicar la causa.
+  return second;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +406,8 @@ export interface ViabilityFacts {
   transientFailures?: number;
   /** Detalle del último fallo, para explicarle al usuario qué pasó. */
   lastFailure?: string;
+  /** Qué tipo de fallo hubo en cada intento fallido (para explicar la causa). */
+  failureKinds?: PingKind[];
 }
 
 export type ViabilityVerdict = 'recomendado' | 'usable' | 'no-viable' | 'no-concluyente';
@@ -391,7 +425,30 @@ export function judgeViability(facts: ViabilityFacts): { verdict: ViabilityVerdi
   if (facts.successes === 0) {
     const failures = facts.attempts;
     const transient = facts.transientFailures ?? 0;
+    const kinds = facts.failureKinds ?? [];
     const detail = facts.lastFailure ? ` (${facts.lastFailure})` : '';
+    const all = (k: PingKind) => kinds.length > 0 && kinds.every((x) => x === k);
+
+    // Responde 200 pero sin texto: NO está caído, es que no es un modelo de
+    // chat (difusión de imágenes, embeddings, reranking…).
+    if (all('empty')) {
+      return {
+        verdict: 'no-viable',
+        reasons: [
+          'responde, pero sin texto: no es un modelo de chat (suele ser de imágenes, embeddings o reranking). No sirve para conversar ni para el agente.',
+        ],
+      };
+    }
+    // El 404 "Not found for account" persistió incluso tras los reintentos:
+    // ya no es un parpadeo, la cuenta no lo tiene habilitado.
+    if (all('not-enabled')) {
+      return {
+        verdict: 'no-viable',
+        reasons: [
+          'tu cuenta de NVIDIA no tiene habilitado este modelo (siguió rechazándolo tras reintentar). Entra a build.nvidia.com, abre la página del modelo y genera la API key desde ahí con "Get API Key".',
+        ],
+      };
+    }
     // Si todos los fallos fueron transitorios, el modelo NO está descartado:
     // el proveedor estaba saturado o el modelo arrancando en frío.
     if (transient >= failures) {
@@ -488,6 +545,7 @@ export async function analyzeViability(endpoint: string, apiKey: string, model: 
     supportsTools,
     transientFailures: failures.filter((p) => p.transient).length,
     lastFailure: failures[failures.length - 1]?.detail,
+    failureKinds: failures.map((p) => p.kind),
   };
   const { verdict, reasons } = judgeViability(facts);
   return { ...facts, verdict, reasons };
