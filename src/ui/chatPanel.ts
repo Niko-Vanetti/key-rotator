@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ChatSession, type ChatBackend } from '../chat/chatSession.js';
+import { IMAGE_MODELS } from '../agent/imageModels.js';
 
 interface IncomingMessage {
   type: string;
@@ -101,6 +102,7 @@ export class ChatPanel {
 
   private currentAccountLabel(): string {
     if (this.session.currentMode === 'agency') return '🏢 Modo agencia';
+    if (this.session.currentMode === 'images') return '🎨 Modo imágenes';
     if (this.accountId) {
       const acc = this.backend.listChatAccounts().find((a) => a.id === this.accountId);
       if (acc) return acc.label;
@@ -163,6 +165,18 @@ export class ChatPanel {
       selectedModel: model,
       onToggles,
     });
+  }
+
+  /**
+   * Modo imágenes: publica SOLO los modelos de imagen (el catálogo propio, no
+   * las API keys de chat) y fija el primero como elegido.
+   */
+  private postImageModels(): void {
+    const models = IMAGE_MODELS.map((m) => ({ id: m.id, label: m.label, note: m.note }));
+    const current = this.session.currentImageModel || models[0]?.id || '';
+    this.session.setImageModel(current);
+    this.post({ type: 'imageModels', models, selected: current });
+    this.post({ type: 'model', model: current });
   }
 
   /** Push models: cached list instantly, then network-refreshed in background. */
@@ -304,9 +318,14 @@ export class ChatPanel {
             : '🔬 Investigación profunda desactivada: responderá directo (solo buscará si le pides algo que lo exija).',
         });
         break;
+      case 'setImageModel':
+        this.session.setImageModel((msg.value ?? '').trim());
+        this.post({ type: 'model', model: msg.value ?? '' });
+        break;
       case 'setMode': {
-        const mode = msg.value === 'agency' ? 'agency' : 'individual';
+        const mode = msg.value === 'agency' ? 'agency' : msg.value === 'images' ? 'images' : 'individual';
         this.session.setMode(mode);
+        if (mode === 'images') this.postImageModels();
         const director = vscode.workspace.getConfiguration('keyRotator').get<string>('agencyDirector', 'auto');
         this.post({
           type: 'info',

@@ -345,3 +345,77 @@ test('pingModel clasifica cada tipo de fallo', async () => {
     globalThis.fetch = realFetch;
   }
 });
+
+// ---- modo imágenes: detección y armado de peticiones ----------------------
+
+test('isImageModel NO confunde diffusiongemma (es un LLM de texto, verificado)', async () => {
+  const { isImageModel } = await import('../src/agent/imageModels.js');
+  // Comprobado en vivo: responde "I cannot draw or generate images. I am Gemma 4".
+  assert.equal(isImageModel('google/diffusiongemma-26b-a4b-it'), false);
+  assert.equal(isImageModel('black-forest-labs/flux.1-dev'), true);
+  assert.equal(isImageModel('black-forest-labs/flux.1-kontext-max'), true);
+  assert.equal(isImageModel('stabilityai/stable-diffusion-3.5-large'), true);
+  assert.equal(isImageModel('z-ai/glm-5.2'), false);
+  assert.equal(isImageModel('deepseek-ai/deepseek-v4-pro'), false);
+});
+
+test('canEditImages distingue los modelos de edición', async () => {
+  const { canEditImages } = await import('../src/agent/imageModels.js');
+  assert.equal(canEditImages('black-forest-labs/flux.1-kontext-max'), true);
+  assert.equal(canEditImages('black-forest-labs/flux.1-kontext-dev'), true);
+  assert.equal(canEditImages('black-forest-labs/flux.1-dev'), false, 'flux dev solo genera');
+  assert.equal(canEditImages('stabilityai/stable-diffusion-3.5-large'), false);
+});
+
+test('imageEndpoint usa la ruta verificada contra la API real', async () => {
+  const { imageEndpoint } = await import('../src/agent/imageModels.js');
+  // Probado: esta ruta devuelve 200 con {artifacts:[{base64}]}; las otras dan 404.
+  assert.equal(
+    imageEndpoint('black-forest-labs/flux.1-dev'),
+    'https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev'
+  );
+});
+
+test('buildImageRequest arma generación vs edición según haya imagen de entrada', async () => {
+  const { buildImageRequest } = await import('../src/agent/imageModels.js');
+  const gen = buildImageRequest({ model: 'black-forest-labs/flux.1-dev', prompt: 'un gato' });
+  assert.equal(gen.prompt, 'un gato');
+  assert.equal(gen.width, 1024);
+  assert.equal(gen.steps, 30);
+  assert.equal(gen.image, undefined, 'sin imagen de entrada no se manda el campo');
+
+  // Formato EXACTO descubierto probando la API: el token literal es
+  // "example_id" y se referencia un asset ya subido, NO base64
+  // (la API responde 422 «Expected: example_id, got: base64» si se manda así).
+  const edit = buildImageRequest({
+    model: 'black-forest-labs/flux.1-kontext-dev',
+    prompt: 'ponle sombrero',
+    assetId: 'abc-123',
+    mime: 'image/jpeg',
+  });
+  assert.equal(edit.image, 'data:image/jpeg;example_id,abc-123');
+  assert.equal(edit.mode, undefined, 'la API rechaza "mode": Extra inputs are not permitted');
+  assert.equal(edit.width, undefined, 'al editar, el tamaño lo hereda de la imagen');
+
+  // schnell usa muy pocos pasos (es el modo rápido).
+  const fast = buildImageRequest({ model: 'black-forest-labs/flux.1-schnell', prompt: 'x' });
+  assert.equal(fast.steps, 4);
+});
+
+test('extractImageB64 lee las distintas formas de respuesta', async () => {
+  const { extractImageB64, extractImageUrl } = await import('../src/agent/imageModels.js');
+  // La forma REAL que devuelve NVIDIA (verificada).
+  assert.equal(extractImageB64({ artifacts: [{ base64: 'AAA' }] }), 'AAA');
+  assert.equal(extractImageB64({ data: [{ b64_json: 'BBB' }] }), 'BBB');
+  assert.equal(extractImageB64({ image: 'data:image/png;base64,CCC' }), 'CCC', 'quita el prefijo data:');
+  assert.equal(extractImageB64({ nada: 1 }), null);
+  assert.equal(extractImageUrl({ data: [{ url: 'https://x/y.png' }] }), 'https://x/y.png');
+});
+
+test('explainImageError da mensajes accionables', async () => {
+  const { explainImageError } = await import('../src/agent/imageModels.js');
+  assert.match(explainImageError(404, '', 'flux'), /Get API Key/);
+  assert.match(explainImageError(429, '', 'flux'), /límite de peticiones/);
+  assert.match(explainImageError(500, '', 'flux'), /momentáneo/);
+  assert.match(explainImageError(400, 'invalid image field', 'flux.1-dev'), /no soporte edición/);
+});

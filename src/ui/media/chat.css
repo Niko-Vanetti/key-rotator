@@ -173,6 +173,8 @@ body.dropping { outline: 2px dashed var(--vscode-focusBorder, #007fd4); outline-
 .mode-item.active { background: var(--vscode-list-activeSelectionBackground, #04395e); }
 /* Modo agencia: los controles manuales quedan inertes (los decide el director). */
 .ctl-group.locked { opacity: 0.45; pointer-events: none; }
+/* Las imágenes generadas se muestran dentro de la burbuja. */
+.msg .body img { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
 
 /* ---------- Interruptor de investigación profunda ---------- */
 .toggle-btn {

@@ -45,6 +45,9 @@ import {
 } from '../agent/agency.js';
 import { PermissionGate, type PermAnswer, type PermCategory } from '../agent/permissions.js';
 import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore } from '../agent/agentStore.js';
+import * as path from 'node:path';
+import { canEditImages } from '../agent/imageModels.js';
+import { runImage } from '../agent/imageRunner.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -257,8 +260,11 @@ export class ChatSession {
   private agentGate: PermissionGate | null = null;
   /** Aborts the in-flight turn (the chat's "Detener" button). */
   private abort: AbortController | null = null;
-  /** 'agency' = a director model plans and runs the others in parallel. */
-  private mode: 'individual' | 'agency' = 'individual';
+  /**
+   * 'agency' = un director reparte el trabajo entre todos los modelos.
+   * 'images' = generar/editar imágenes con los modelos de imagen.
+   */
+  private mode: 'individual' | 'agency' | 'images' = 'individual';
   /** Live-status bookkeeping for agency calls whose text isn't streamed out. */
   private agencyChars = 0;
   private lastStatusAt = 0;
@@ -323,7 +329,7 @@ export class ChatSession {
   }
 
   /** Individual (one model) vs agency (a director orchestrates all of them). */
-  setMode(mode: 'individual' | 'agency'): void {
+  setMode(mode: 'individual' | 'agency' | 'images'): void {
     this.mode = mode;
   }
 
@@ -332,8 +338,17 @@ export class ChatSession {
     this.research = on;
   }
 
-  get currentMode(): 'individual' | 'agency' {
+  get currentMode(): 'individual' | 'agency' | 'images' {
     return this.mode;
+  }
+
+  /** Modelo de imagen elegido en el modo imágenes. */
+  private imageModel = '';
+  setImageModel(id: string): void {
+    this.imageModel = id;
+  }
+  get currentImageModel(): string {
+    return this.imageModel;
   }
 
   /** Reset so the next message starts a brand-new claude session. */
@@ -390,7 +405,8 @@ export class ChatSession {
 
       // NVIDIA Build / OpenRouter → the file/command AGENT loop (tools).
       if (account.openai && AGENT_PROVIDERS.has(account.openai.provider)) {
-        if (this.mode === 'agency') await this.runAgencyTurn(text, account, handlers, attachments);
+        if (this.mode === 'images') await this.runImageTurn(text, account, handlers, attachments);
+        else if (this.mode === 'agency') await this.runAgencyTurn(text, account, handlers, attachments);
         else await this.runAgentTurnFor(text, account, handlers, attachments);
         return;
       }
@@ -468,6 +484,72 @@ export class ChatSession {
    * NVIDIA Build's free tier is 40 rpm; stay a few under it as margin.
    */
   private static readonly RPM_CAPS: Record<string, number> = { nvidia: 35 };
+
+  /**
+   * MODO IMÁGENES: genera una imagen desde el texto, o EDITA la que hayas
+   * adjuntado (arrastrada, pegada con Ctrl+V o con el botón +). La imagen
+   * resultante se guarda en la carpeta de trabajo y se muestra en el chat.
+   */
+  private async runImageTurn(
+    text: string,
+    account: ActiveAccount,
+    handlers: TurnHandlers,
+    attachments?: string[]
+  ): Promise<void> {
+    const ctx = this.backend.getAgentContext?.();
+    const model = this.imageModel;
+    if (!model) {
+      handlers.onError('Elige abajo un modelo de imagen antes de enviar.');
+      return;
+    }
+    const apiKey = account.openai?.apiKey;
+    if (!apiKey) {
+      handlers.onError('La cuenta activa no tiene API key.');
+      return;
+    }
+    const inputFile = (attachments ?? []).filter(isImageFile)[0];
+    if (inputFile && !canEditImages(model)) {
+      handlers.onError(
+        `"${model}" solo genera imágenes, no las edita. Para editar elige un modelo Kontext en el selector de abajo.`
+      );
+      return;
+    }
+    handlers.onModel(model);
+    handlers.onStatus?.(inputFile ? 'Preparando la edición…' : 'Generando la imagen…');
+
+    const outDir = path.join(ctx?.defaultCwd() ?? process.cwd(), 'salidas');
+    const res = await runImage({
+      apiKey,
+      model,
+      prompt: text,
+      inputFile,
+      outDir,
+      signal: this.abort?.signal,
+      onStatus: (s) => handlers.onStatus?.(s),
+    });
+
+    if (!res.ok) {
+      if (this.abort?.signal.aborted) {
+        handlers.onInfo('⏹ Detenido por ti.');
+        handlers.onDone('');
+        return;
+      }
+      handlers.onError(res.detail);
+      return;
+    }
+    // Se muestra en el chat (como data URL, que es lo que permite la CSP del
+    // webview) y además queda guardada en disco.
+    const title = inputFile ? 'Imagen editada' : 'Imagen generada';
+    let body: string;
+    if (res.file) {
+      const dataUrl = imageToDataUrl(res.file);
+      body = `${dataUrl ? `![${title}](${dataUrl})\n\n` : ''}📁 Guardada en: ${res.file}`;
+    } else {
+      body = `![${title}](${res.url})\n\n${res.url}`;
+    }
+    handlers.onDelta(`**${title}** — ${res.detail}\n\n${body}`);
+    handlers.onDone(`${title}: ${res.file ?? res.url ?? ''}`);
+  }
 
   /**
    * MODO AGENCIA: el director (mejor modelo disponible) planifica qué modelo

@@ -28,6 +28,10 @@
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   function inline(s) {
     return s.replace(/`([^`]+)`/g, (_, c) => '<code>' + esc(c) + '</code>')
+      // Imágenes generadas: ![alt](data:image/... | https://...). Solo se
+      // aceptan esos dos orígenes, que son los que permite la CSP.
+      .replace(/!\[([^\]]*)\]\((data:image\/[^)]+|https:\/\/[^)]+)\)/g,
+        (_, alt, src) => '<img alt="' + alt + '" src="' + src + '" />')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
   }
@@ -205,13 +209,40 @@
   // bloquean los selectores para que no haya dos fuentes de verdad.
   function applyMode(mode) {
     const agency = mode === 'agency';
+    const images = mode === 'images';
     const ctl = document.getElementById('claudeControls');
+    // En agencia manda el director; en imágenes hay su propio selector.
     if (ctl) ctl.classList.toggle('locked', agency);
+    if (ctl) ctl.classList.toggle('hidden', images);
     [modelSelect, effortSelect].forEach((el) => {
       if (!el) return;
       el.disabled = agency;
       el.title = agency ? 'En modo agencia lo decide el director (elígelo en Administrar modelos)' : '';
     });
+    const imgCtl = document.getElementById('imageControls');
+    if (imgCtl) imgCtl.classList.toggle('hidden', !images);
+    const research = document.getElementById('researchBtn');
+    if (research) research.classList.toggle('hidden', images);
+    if (inputEl) {
+      inputEl.placeholder = images
+        ? 'Describe la imagen…  (adjunta una imagen para editarla)'
+        : 'Escribe un mensaje…  ( / para comandos · Enter envía )';
+    }
+  }
+
+  // Catálogo de modelos de imagen (solo aparece en modo imágenes).
+  function renderImageModels(models, selected) {
+    const sel = document.getElementById('imageModelSelect');
+    if (!sel) return;
+    sel.innerHTML = '';
+    (models || []).forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.label;
+      o.title = m.note || '';
+      sel.appendChild(o);
+    });
+    if (selected) sel.value = selected;
   }
 
   // ---------- slash autocomplete ----------
@@ -460,6 +491,10 @@
     addNotice('info', 'No pude leer lo que soltaste. Usa el botón ＋ para adjuntarlo.');
   });
   modelSelect.addEventListener('change', () => vscode.postMessage({ type: 'setModel', value: modelSelect.value }));
+  {
+    const imgSel = $('imageModelSelect');
+    if (imgSel) imgSel.addEventListener('change', () => vscode.postMessage({ type: 'setImageModel', value: imgSel.value }));
+  }
   effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));
   webModelSelect.addEventListener('change', () => {
     const opt = webModelSelect.options[webModelSelect.selectedIndex];
@@ -526,6 +561,7 @@
       case 'webAttach': addAttachChip(msg.name, msg.path); break;
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'mode': applyMode(msg.mode); break;
+      case 'imageModels': renderImageModels(msg.models, msg.selected); break;
       case 'slash': slashCommands = msg.commands || []; break;
       case 'loading':
         showLoading(msg.title);

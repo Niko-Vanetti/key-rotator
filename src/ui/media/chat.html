@@ -2,7 +2,8 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}};" />
+  <!-- img-src permite mostrar las imágenes generadas (llegan como data: URL). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}}; img-src {{cspSource}} data: https:;" />
   <link rel="stylesheet" href="{{styleUri}}" />
   <title>KeyRotator Chat</title>
 </head>
@@ -23,6 +24,9 @@
           </button>
           <button class="menu-item mode-item" data-mode="agency">
             <b>○ Modo agencia</b><small>Un director investiga qué modelo sirve para cada parte, los pone a trabajar en paralelo e integra el resultado.</small>
+          </button>
+          <button class="menu-item mode-item" data-mode="images">
+            <b>○ Modo imágenes</b><small>Generar imágenes desde texto, o editar una que adjuntes. Solo salen modelos de imagen.</small>
           </button>
           <div class="menu-sep"></div>
           <button class="menu-item" data-act="pasteSnippet">＋ Agregar modelo (pegar código)</button>
@@ -70,6 +74,13 @@
               <option value="xhigh">xhigh</option>
               <option value="max">max</option>
             </select>
+          </label>
+        </span>
+        <!-- Modo imágenes: su propio selector, solo modelos de imagen. -->
+        <span id="imageControls" class="ctl-group hidden">
+          <label class="ctl">
+            <span>Modelo de imagen</span>
+            <select id="imageModelSelect"></select>
           </label>
         </span>
         <!-- Investigación profunda: apagada por defecto (si no, hasta un
