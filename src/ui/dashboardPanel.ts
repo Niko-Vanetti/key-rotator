@@ -91,6 +91,38 @@ export class DashboardPanel {
     DashboardPanel.current?.postState();
   }
 
+  /** Evita solaparse si el dashboard se abre/refresca varias veces seguidas. */
+  private rechecking = false;
+
+  /**
+   * Al abrir el dashboard, vuelve a probar EN SEGUNDO PLANO los modelos cuyo
+   * veredicto falta o es viejo (>6 h), para que un modelo que se cayó no siga
+   * marcado "recomendado". Secuencial (lo espacia el throttle de 35 rpm) y no
+   * bloquea la vista. Solo modelos de NVIDIA/OpenRouter.
+   */
+  private async recheckStale(): Promise<void> {
+    if (this.rechecking) return;
+    this.rechecking = true;
+    const STALE_MS = 6 * 60 * 60 * 1000;
+    const now = Date.now();
+    try {
+      const accounts = this.callbacks.getState().accounts;
+      const stale = accounts.filter(
+        (a) =>
+          (a.provider === 'nvidia' || a.provider === 'openrouter') &&
+          (!a.viability || now - a.viability.at > STALE_MS)
+      );
+      for (const a of stale) {
+        if (!DashboardPanel.current) return; // el panel se cerró
+        const v = await this.callbacks.testModel(a.id);
+        this.panel.webview.postMessage({ type: 'modelVerdict', id: a.id, ...v });
+      }
+      if (stale.length > 0) this.postState();
+    } finally {
+      this.rechecking = false;
+    }
+  }
+
   private postState(): void {
     this.panel.webview.postMessage({
       type: 'state',
@@ -105,6 +137,7 @@ export class DashboardPanel {
     switch (msg.type) {
       case 'ready':
         this.postState();
+        void this.recheckStale(); // en segundo plano, no bloquea la UI
         break;
       case 'addAccount': {
         if (!msg.account) return;

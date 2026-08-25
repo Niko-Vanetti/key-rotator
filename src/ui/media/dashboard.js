@@ -43,9 +43,19 @@ function renderAccounts(accounts) {
 
   // El MODELO, su veredicto de viabilidad GUARDADO y las acciones.
   const ICON = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔', 'no-concluyente': '❔' };
+  // Antigüedad legible del último análisis (para saber si el dato es fresco).
+  const ageOf = (at) => {
+    if (!at) return '';
+    const m = Math.floor((Date.now() - at) / 60000);
+    if (m < 1) return ' · recién probado';
+    if (m < 60) return ` · hace ${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return ` · hace ${h} h`;
+    return ` · hace ${Math.floor(h / 24)} d`;
+  };
   for (const acc of accounts) {
     const v = acc.viability;
-    const text = v ? `${ICON[v.verdict] || ''} ${v.verdict}: ${v.summary}` : 'sin probar todavía';
+    const text = v ? `${ICON[v.verdict] || ''} ${v.verdict}: ${v.summary}${ageOf(v.at)}` : 'sin probar todavía';
     const cls = v ? 'sub verdict ' + v.verdict : 'sub verdict';
     const card = document.createElement('div');
     card.className = 'account-card';
