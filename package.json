@@ -2,7 +2,7 @@
   "name": "key-rotator",
   "displayName": "KeyRotator",
   "description": "Manage and auto-rotate AI provider API keys (Claude, OpenAI, Gemini, Ollama, and more) on rate limits.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "niko-local",
   "engines": {
     "vscode": "^1.85.0"

@@ -14,7 +14,7 @@ extensión detecta el resto sola.
 ```bash
 npm install
 npm run package
-code --install-extension key-rotator-0.1.0.vsix
+code --install-extension key-rotator-*.vsix
 ```
 
 Después de instalar, recarga la ventana de VS Code (`Ctrl+Shift+P` →
@@ -28,7 +28,7 @@ Si ya tienes KeyRotator instalado y quieres traerte los cambios nuevos:
 git pull                 # trae los cambios del repositorio
 npm install              # solo hace falta si cambiaron las dependencias
 npm run package          # regenera el .vsix
-code --install-extension key-rotator-0.1.0.vsix
+code --install-extension key-rotator-*.vsix
 ```
 
 Luego **recarga la ventana** (`Ctrl+Shift+P` → **Developer: Reload Window**). Este
@@ -50,8 +50,8 @@ Notas:
 ## Primeros pasos
 
 1. Abre el panel **KeyRotator** en la barra de actividad (ícono de llave).
-2. En la vista **API Keys**, haz clic en el ícono 📋 ("Pegar código") —o abre el
-   **Dashboard** ("KeyRotator: Open Dashboard") y usa la caja de texto.
+2. En la vista **Chats**, usa el botón 📋 ("Pegar código") —o abre el **Dashboard**
+   ("KeyRotator: Open Dashboard") y usa la caja de texto de la pestaña Modelos.
 3. Pega ahí el bloque de código de ejemplo de build.nvidia.com (o de OpenRouter) tal
    cual, o solo tu API key. Se detectan automáticamente el proveedor, el endpoint, el
    modelo y los parámetros (`temperature`, `top_p`, `max_tokens`, `seed`).
@@ -59,23 +59,25 @@ Notas:
    en un campo oculto.
 5. La cuenta queda creada —con el nombre del modelo— y el chat se abre listo para
    usarla.
-6. Repite para cada modelo. La lista de la vista **API Keys** muestra cada uno por su
-   nombre, en orden alfabético, con un botón para eliminarlo.
+6. Repite para cada modelo. La pestaña **Modelos** del Dashboard muestra cada uno por
+   su nombre, con su veredicto de viabilidad y botones para probarlo o eliminarlo.
 
 ## Verificar qué modelos funcionan de verdad
 
 El catálogo de modelos que devuelve la API no siempre coincide con lo que tu cuenta
 puede usar en la práctica: algunos dan error, otros tardan minutos en responder o
-nunca lo hacen. Haz clic derecho sobre un modelo (o usa "KeyRotator: Probar conexión")
-para correr un análisis real: dos peticiones para medir velocidad y consistencia, más
-una prueba de si el modelo invoca herramientas de verdad. El resultado es un
-veredicto:
+nunca lo hacen. En el Dashboard (pestaña Modelos), el botón **Probar** de cada modelo
+corre un análisis real: dos peticiones para medir velocidad y consistencia, más una
+prueba de si el modelo invoca herramientas de verdad. El análisis se ejecuta también
+solo al agregar un modelo, y el veredicto queda guardado junto a él:
 
 - ✅ **recomendado** — responde rápido y soporta herramientas.
 - ⚠️ **usable** — funciona, pero con un aviso concreto (lento, inconsistente, o sin
   soporte de herramientas).
-- ⛔ **no viable** — no respondió ninguna vez; se excluye automáticamente del equipo
+- ⛔ **no viable** — no respondió, o no es un modelo de chat; se excluye del equipo
   del Modo agencia.
+- ❔ **no concluyente** — el proveedor no respondió a tiempo o rechazó por límite de
+  peticiones; no dice nada del modelo, vuelve a probarlo en un momento.
 
 ## Chat — Modo individual
 
@@ -139,12 +141,11 @@ integraciones gestionadas por claude.ai (Canva, Google Drive, Gmail, Calendar) s
 OAuth y no se pueden vincular por esta vía; solo los servidores MCP que se lanzan con
 un comando propio funcionan aquí.
 
-## Vista lateral y barra de estado
+## Barra lateral y de estado
 
-La vista **API Keys** lista tus modelos; haz clic derecho sobre uno para más opciones
-(probar conexión, renombrar, eliminar, ajustar prioridad). El ítem de la barra de
-estado muestra cuántos de tus modelos están activos y permite reportar un límite de
-uso detectado antes del próximo chequeo automático.
+La barra lateral de KeyRotator muestra la vista **Chats** (tus conversaciones, con un
+botón para borrarlas). Los modelos se gestionan en el **Dashboard** (pestaña Modelos).
+El ítem de la barra de estado muestra cuántos de tus modelos están activos.
 
 ## Soporte heredado: chat clásico de Claude
 
