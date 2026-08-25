@@ -1,13 +1,27 @@
 {
   "name": "key-rotator",
   "displayName": "KeyRotator",
-  "description": "Manage and auto-rotate AI provider API keys (Claude, OpenAI, Gemini, Ollama, and more) on rate limits.",
+  "description": "Turn your NVIDIA Build / OpenRouter API keys into an AI agent inside VS Code: files, commands, web, images and a multi-model agency — with approval on every step.",
   "version": "0.2.0",
   "publisher": "niko-local",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Niko-Vanetti/key-rotator"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "nvidia",
+    "openrouter",
+    "llm"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
+    "AI",
+    "Chat",
     "Other"
   ],
   "activationEvents": [

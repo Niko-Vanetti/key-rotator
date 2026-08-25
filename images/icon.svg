@@ -1,0 +1,51 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="KeyRotator">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="0.55" stop-color="#5B4BE0"/>
+      <stop offset="1" stop-color="#3B2FB5"/>
+    </linearGradient>
+    <linearGradient id="key" x1="88" y1="60" x2="168" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E7E9FF"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="40" y1="40" x2="216" y2="216" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5DF2A8"/>
+      <stop offset="1" stop-color="#37D8E6"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1B1250" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded tile background -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#tile)"/>
+  <!-- subtle top sheen -->
+  <rect x="8" y="8" width="240" height="120" rx="52" fill="#FFFFFF" opacity="0.06"/>
+
+  <!-- Rotation arcs (the "rotator") -->
+  <g stroke="url(#ring)" stroke-width="12" stroke-linecap="round" fill="none">
+    <path d="M188 92 A70 70 0 0 1 92 188"/>
+    <path d="M68 164 A70 70 0 0 1 164 68"/>
+  </g>
+  <!-- arrow heads -->
+  <path d="M188 92 l-2 -26 l24 12 z" fill="#5DF2A8"/>
+  <path d="M68 164 l2 26 l-24 -12 z" fill="#37D8E6"/>
+
+  <!-- Key -->
+  <g filter="url(#soft)">
+    <!-- bow (head) -->
+    <circle cx="128" cy="104" r="34" fill="url(#key)"/>
+    <circle cx="128" cy="104" r="15" fill="#5B4BE0"/>
+    <!-- shaft -->
+    <rect x="120" y="128" width="16" height="66" rx="7" fill="url(#key)"/>
+    <!-- teeth -->
+    <rect x="136" y="158" width="20" height="14" rx="4" fill="url(#key)"/>
+    <rect x="136" y="180" width="14" height="14" rx="4" fill="url(#key)"/>
+  </g>
+
+  <!-- AI spark -->
+  <g fill="#FFE27A">
+    <path d="M182 60 l5 14 l14 5 l-14 5 l-5 14 l-5 -14 l-14 -5 l14 -5 z"/>
+  </g>
+</svg>

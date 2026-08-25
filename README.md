@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🔑 KeyRotator
+<img src="images/icon.png" width="128" alt="KeyRotator" />
+
+# KeyRotator
 
 **Convierte tus API keys de NVIDIA Build en un agente de IA dentro de VS Code.**
 **Turn your NVIDIA Build API keys into an AI agent inside VS Code.**
