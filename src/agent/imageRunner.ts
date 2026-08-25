@@ -71,6 +71,8 @@ export async function uploadAsset(
 export async function runImage(opts: {
   apiKey: string;
   model: string;
+  /** Exact hosted endpoint captured from the NVIDIA Build sample. */
+  endpoint?: string;
   prompt: string;
   /** Ruta de la imagen de partida, para EDITARLA. */
   inputFile?: string;
@@ -116,13 +118,20 @@ export async function runImage(opts: {
 
 /** Un intento de la llamada de imagen. */
 async function attemptImage(
-  opts: { apiKey: string; model: string; outDir: string; prompt: string; signal?: AbortSignal },
+  opts: {
+    apiKey: string;
+    model: string;
+    endpoint?: string;
+    outDir: string;
+    prompt: string;
+    signal?: AbortSignal;
+  },
   body: Record<string, unknown>,
   assetId: string | undefined,
   t0: number
 ): Promise<ImageRunResult> {
   try {
-    const res = await fetch(imageEndpoint(opts.model), {
+    const res = await fetch(opts.endpoint || imageEndpoint(opts.model), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${opts.apiKey}`,

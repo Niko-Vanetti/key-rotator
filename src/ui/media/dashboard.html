@@ -7,83 +7,124 @@
   <title>KeyRotator</title>
 </head>
 <body>
-  <div class="tabs">
-    <button class="tab active" data-tab="keys">Modelos</button>
-    <button class="tab" data-tab="mcp">MCP</button>
-    <button class="tab" data-tab="skills">Skills</button>
-    <button class="tab" data-tab="history">Historial</button>
-    <button class="tab" data-tab="stats">Estadísticas</button>
+  <div class="workspace-shell">
+    <header class="dashboard-header">
+      <div class="dashboard-brand">
+        <span class="brand-mark" aria-hidden="true">K</span>
+        <div>
+          <h1>KeyRotator</h1>
+          <p>Modelos, herramientas y actividad</p>
+        </div>
+      </div>
+      <span class="system-state"><span aria-hidden="true"></span>Sistema activo</span>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Secciones de KeyRotator">
+      <button class="tab active" data-tab="keys" role="tab" aria-selected="true">Modelos</button>
+      <button class="tab" data-tab="mcp" role="tab" aria-selected="false">MCP</button>
+      <button class="tab" data-tab="skills" role="tab" aria-selected="false">Skills</button>
+      <button class="tab" data-tab="history" role="tab" aria-selected="false">Historial</button>
+      <button class="tab" data-tab="stats" role="tab" aria-selected="false">Estadísticas</button>
+    </nav>
+
+    <main class="workspace-content">
+      <section id="keys" class="panel active">
+        <div class="panel-heading">
+          <div><span class="eyebrow">Proveedores</span><h2>Modelos conectados</h2></div>
+          <p>Pega una clave o un ejemplo de código. KeyRotator detecta el proveedor y la configuración.</p>
+        </div>
+
+        <div class="add-form primary-form">
+          <textarea id="pasteBox" class="full" rows="6"
+            placeholder="Pega código de NVIDIA Build, OpenRouter o una API key"></textarea>
+          <input id="newLabel" class="full" placeholder="Nombre para reconocerlo (opcional)" />
+          <div class="detect-hint" id="detectHint" aria-live="polite"></div>
+          <button id="addBtn" class="full">Agregar modelo</button>
+        </div>
+
+        <div class="section-head director-row">
+          <div>
+            <span class="eyebrow">Modo agencia</span>
+            <p class="hint"><b>Director</b> · investiga, asigna el trabajo e integra la respuesta.</p>
+          </div>
+          <select id="directorSelect" aria-label="Director de la agencia"></select>
+        </div>
+        <div id="accountList" class="resource-list"></div>
+      </section>
+
+      <section id="mcp" class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">Herramientas</span><h2>Servidores MCP</h2></div>
+          <p>Conecta capacidades externas. Cada llamada requiere tu aprobación.</p>
+        </div>
+        <div class="section-head">
+          <span></span>
+          <button id="syncMcpBtn">Sincronizar con Claude</button>
+        </div>
+        <div class="add-form">
+          <textarea id="mcpBox" class="full" rows="5"
+            placeholder='Pega un servidor MCP o el bloque completo { "mcpServers": { ... } }'></textarea>
+          <button id="addMcpBtn" class="full">Agregar o actualizar MCP</button>
+        </div>
+        <div id="mcpList" class="resource-list"></div>
+      </section>
+
+      <section id="skills" class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">Biblioteca</span><h2>Skills del agente</h2></div>
+          <p>Instrucciones reutilizables que el agente puede cargar durante una tarea.</p>
+        </div>
+        <div class="section-head">
+          <span></span>
+          <span>
+            <button id="importSkillsBtn">Importar carpeta</button>
+            <button id="syncSkillsBtn">Sincronizar con Claude</button>
+          </span>
+        </div>
+        <div id="skillDrop" class="drop-zone">
+          <strong>Suelta aquí una carpeta de skills</strong>
+          <span>Se importan subcarpetas con <code>SKILL.md</code> y archivos <code>.md</code>.</span>
+        </div>
+        <div class="add-form">
+          <input id="skillName" class="full" placeholder="Nombre de la skill" />
+          <textarea id="skillBox" class="full" rows="5" placeholder="Instrucciones en Markdown"></textarea>
+          <button id="addSkillBtn" class="full">Crear o actualizar skill</button>
+        </div>
+        <div id="skillList" class="resource-list"></div>
+      </section>
+
+      <section id="history" class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">Actividad</span><h2>Historial de rotación</h2></div>
+          <p>Cambios de cuenta realizados para mantener las conversaciones disponibles.</p>
+        </div>
+        <div class="table-wrap">
+          <table id="historyTable">
+            <thead><tr><th>Fecha</th><th>De</th><th>A</th><th>Proveedor</th><th>Razón</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="empty" id="historyEmpty">Aún no hay rotaciones.</div>
+      </section>
+
+      <section id="stats" class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">Rendimiento</span><h2>Estadísticas</h2></div>
+          <p>Una vista rápida de la estabilidad de tus proveedores.</p>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-block">
+            <h3>Rotaciones por proveedor</h3>
+            <div id="statsByProvider"></div>
+          </div>
+          <div class="stat-block">
+            <h3>Cuenta más estable</h3>
+            <div id="mostStable"></div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
-
-  <section id="keys" class="panel active">
-    <div class="add-form">
-      <textarea id="pasteBox" class="full" rows="7"
-        placeholder="Pega aquí el código de ejemplo de build.nvidia.com u OpenRouter (Python/JS), o solo tu API key.&#10;&#10;Se detecta solo: proveedor, endpoint, modelo, API key y parámetros (temperature, top_p, max_tokens, seed)."></textarea>
-      <input id="newLabel" class="full" placeholder="Nombre (opcional)" />
-      <div class="detect-hint" id="detectHint"></div>
-      <button id="addBtn" class="full">Agregar cuenta</button>
-    </div>
-    <div class="section-head director-row">
-      <p class="hint">
-        <b>Director de la agencia</b> — quién investiga, reparte el trabajo y contrata.
-        Solo aplica en Modo agencia.
-      </p>
-      <select id="directorSelect"></select>
-    </div>
-    <div id="accountList"></div>
-  </section>
-
-  <section id="mcp" class="panel">
-    <div class="section-head">
-      <p class="hint">Servidores MCP que puede usar el agente. Cada llamada pide tu aprobación.</p>
-      <button id="syncMcpBtn">⇄ Sincronizar con los MCP de Claude</button>
-    </div>
-    <div class="add-form">
-      <textarea id="mcpBox" class="full" rows="5"
-        placeholder='Pega la config de un servidor MCP, p.ej.:&#10;{ "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] } }&#10;o el bloque completo { "mcpServers": { … } }'></textarea>
-      <button id="addMcpBtn" class="full">Agregar / actualizar MCP</button>
-    </div>
-    <div id="mcpList"></div>
-  </section>
-
-  <section id="skills" class="panel">
-    <div class="section-head">
-      <p class="hint">Skills disponibles para el agente (use_skill). Se leen de tu biblioteca.</p>
-      <span>
-        <button id="importSkillsBtn">📁 Importar desde una carpeta…</button>
-        <button id="syncSkillsBtn">⇄ Sincronizar con las Skills de Claude</button>
-      </span>
-    </div>
-    <div id="skillDrop" class="drop-zone">
-      Arrastra aquí una carpeta (por ejemplo tu repo de skills) para importar todas las
-      que contenga: cada subcarpeta con <code>SKILL.md</code> y cada archivo <code>.md</code> suelto.
-    </div>
-    <div class="add-form">
-      <input id="skillName" class="full" placeholder="Nombre de la skill nueva (ej: mi-metodologia)" />
-      <textarea id="skillBox" class="full" rows="5" placeholder="Contenido de la skill (Markdown con las instrucciones)"></textarea>
-      <button id="addSkillBtn" class="full">Crear / actualizar skill</button>
-    </div>
-    <div id="skillList"></div>
-  </section>
-
-  <section id="history" class="panel">
-    <table id="historyTable">
-      <thead><tr><th>Fecha</th><th>De</th><th>A</th><th>Proveedor</th><th>Razón</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div class="empty" id="historyEmpty">Sin rotaciones todavía.</div>
-  </section>
-
-  <section id="stats" class="panel">
-    <div class="stat-block">
-      <h3>Rotaciones por proveedor</h3>
-      <div id="statsByProvider"></div>
-    </div>
-    <div class="stat-block">
-      <h3>Cuenta más estable</h3>
-      <div id="mostStable"></div>
-    </div>
-  </section>
 
   <script src="{{scriptUri}}"></script>
 </body>

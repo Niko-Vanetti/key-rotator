@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { waitForSlot } from '../chat/openaiChat.js';
+import { runImage } from './imageRunner.js';
 
 /**
  * "AI-grade" tools beyond the filesystem: web fetch, web search, image
@@ -158,46 +159,17 @@ export async function generateImage(
 ): Promise<string> {
   if (!prompt.trim()) return 'ERROR: prompt vacío.';
   if (!ctx.apiKey) return 'ERROR: la cuenta activa no tiene API key.';
-  const base = ctx.endpoint.replace(/\/v1\/?$/, '');
-  const urls = [`${base}/v1/genai/${model}`, `${base}/v1/infer/${model}`];
-  let lastErr = '';
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${ctx.apiKey}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ prompt, width: 1024, height: 1024, steps: 30, cfg_scale: 3.5, seed: 0 }),
-        signal: AbortSignal.timeout(180_000),
-      });
-      const body = await res.text();
-      if (!res.ok) {
-        lastErr = `HTTP ${res.status}: ${body.slice(0, 200)}`;
-        continue;
-      }
-      const json = JSON.parse(body) as {
-        artifacts?: { base64?: string }[];
-        data?: { b64_json?: string; url?: string }[];
-        image?: string;
-      };
-      const b64 = json.artifacts?.[0]?.base64 ?? json.data?.[0]?.b64_json ?? json.image;
-      if (!b64) {
-        const remote = json.data?.[0]?.url;
-        if (remote) return `Imagen generada (URL): ${remote}`;
-        lastErr = `respuesta sin imagen: ${body.slice(0, 200)}`;
-        continue;
-      }
-      const file = outPath(ctx.getCwd(), prompt.slice(0, 30), 'png');
-      fs.writeFileSync(file, Buffer.from(b64.replace(/^data:image\/\w+;base64,/, ''), 'base64'));
-      return `Imagen generada y guardada en: ${file}`;
-    } catch (e) {
-      lastErr = (e as Error).message;
-    }
-  }
-  return `ERROR generando la imagen con "${model}": ${lastErr}. Prueba otro modelo de imagen de build.nvidia.com (p.ej. stabilityai/stable-diffusion-3.5-large).`;
+  if (ctx.provider !== 'nvidia') return 'ERROR: la generación de imágenes está disponible solo para NVIDIA Build.';
+  const result = await runImage({
+    apiKey: ctx.apiKey,
+    model,
+    prompt,
+    outDir: path.join(ctx.getCwd(), 'salidas'),
+  });
+  if (!result.ok) return `ERROR generando la imagen con "${model}": ${result.detail}`;
+  return result.file
+    ? `Imagen generada y guardada en: ${result.file}`
+    : `Imagen generada (URL): ${result.url}`;
 }
 
 /** Source count per depth level (pure, tested). */

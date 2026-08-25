@@ -10,7 +10,7 @@ import {
 import { defaultHome, siblingProfileHomes, syncSessionIntoStore, type SessionSummary, type ChatMessage } from './sessionStore.js';
 import type { WebChatRunner, WebCaps } from './webChatRunner.js';
 import { streamOpenAIChat, type OAIMessage } from './openaiChat.js';
-import { runAgentTurn, type ContentPart } from '../agent/agentLoop.js';
+import { runAgentTurn, type AgentMessage, type ContentPart } from '../agent/agentLoop.js';
 import { AGENT_TOOLS, toolsFor, executeTool, agentSystemPrompt, readSkill } from '../agent/tools.js';
 import {
   webSearch,
@@ -18,7 +18,6 @@ import {
   generateImage,
   deepResearch,
   imageToDataUrl,
-  isImageFile,
   suggestModels,
 } from '../agent/aiTools.js';
 import {
@@ -48,6 +47,16 @@ import { newAgentSession, isAgentSessionId, type AgentSession, type AgentStore }
 import * as path from 'node:path';
 import { canEditImages } from '../agent/imageModels.js';
 import { runImage } from '../agent/imageRunner.js';
+import {
+  attachmentToDataUrl,
+  extractAttachmentText,
+  inspectAttachment,
+  type MediaAttachment,
+} from './mediaAttachments.js';
+import {
+  profileAcceptsKind,
+  type NvidiaModelProfile,
+} from '../agent/nvidiaProfiles.js';
 
 /** A resolved account ready to make a request (key held only transiently). */
 export interface ActiveAccount {
@@ -75,7 +84,14 @@ export interface ActiveAccount {
    * OpenAI-compatible API account (OpenRouter, …): the turn is a streaming
    * `/chat/completions` call instead of the `claude` CLI.
    */
-  openai?: { apiKey: string; endpoint: string; model: string; provider: string; params?: Record<string, number> };
+  openai?: {
+    apiKey: string;
+    endpoint: string;
+    model: string;
+    provider: string;
+    params?: Record<string, number>;
+    profile?: NvidiaModelProfile;
+  };
 }
 
 /**
@@ -135,6 +151,8 @@ export interface ChatBackend {
    * choosing one switches to that account. Empty for non-agent setups.
    */
   listApiAccountModels?(): { accountId: string; model: string }[];
+  /** NVIDIA Build contracts imported from the user's own sample snippets. */
+  listNvidiaProfiles?(): NvidiaModelProfile[];
   /** Agent support (NVIDIA Build / OpenRouter): permissions UI + own store. */
   getAgentContext?(): AgentBackendContext;
 }
@@ -380,7 +398,7 @@ export class ChatSession {
     this.sessionCwd = cwd && cwd.length > 0 ? cwd : null;
   }
 
-  async sendMessage(text: string, handlers: TurnHandlers, attachments?: string[]): Promise<void> {
+  async sendMessage(text: string, handlers: TurnHandlers, attachments?: MediaAttachment[]): Promise<void> {
     if (this.busy) {
       handlers.onError('Espera a que termine la respuesta anterior.');
       return;
@@ -494,7 +512,7 @@ export class ChatSession {
     text: string,
     account: ActiveAccount,
     handlers: TurnHandlers,
-    attachments?: string[]
+    attachments?: MediaAttachment[]
   ): Promise<void> {
     const ctx = this.backend.getAgentContext?.();
     const model = this.imageModel;
@@ -507,8 +525,12 @@ export class ChatSession {
       handlers.onError('La cuenta activa no tiene API key.');
       return;
     }
-    const inputFile = (attachments ?? []).filter(isImageFile)[0];
-    if (inputFile && !canEditImages(model)) {
+    const inputFile = (attachments ?? []).find((a) => a.kind === 'image')?.path;
+    const profile = account.openai?.profile;
+    const canEdit = profile
+      ? profile.capabilities.includes('image-edit')
+      : canEditImages(model);
+    if (inputFile && !canEdit) {
       handlers.onError(
         `"${model}" solo genera imágenes, no las edita. Para editar elige un modelo Kontext en el selector de abajo.`
       );
@@ -518,9 +540,14 @@ export class ChatSession {
     handlers.onStatus?.(inputFile ? 'Preparando la edición…' : 'Generando la imagen…');
 
     const outDir = path.join(ctx?.defaultCwd() ?? process.cwd(), 'salidas');
+    if (ctx) {
+      if (!this.agentSession) this.agentSession = newAgentSession(account.id, 'nvidia', model, ctx.defaultCwd());
+      this.agentSession.messages.push({ role: 'user', content: text, attachments });
+    }
     const res = await runImage({
       apiKey,
       model,
+      endpoint: profile?.endpoint,
       prompt: text,
       inputFile,
       outDir,
@@ -548,6 +575,15 @@ export class ChatSession {
       body = `![${title}](${res.url})\n\n${res.url}`;
     }
     handlers.onDelta(`**${title}** — ${res.detail}\n\n${body}`);
+    if (ctx && this.agentSession) {
+      const generated = res.file ? inspectAttachment(res.file, 'generated', true) : null;
+      this.agentSession.messages.push({
+        role: 'assistant',
+        content: `${title}: ${res.file ?? res.url ?? ''}`,
+        attachments: generated?.ok ? [generated.attachment] : undefined,
+      });
+      ctx.store.save(this.agentSession);
+    }
     handlers.onDone(`${title}: ${res.file ?? res.url ?? ''}`);
   }
 
@@ -560,7 +596,7 @@ export class ChatSession {
     text: string,
     account: ActiveAccount,
     handlers: TurnHandlers,
-    attachments?: string[]
+    attachments?: MediaAttachment[]
   ): Promise<void> {
     const ctx = this.backend.getAgentContext?.();
     if (!ctx) {
@@ -578,7 +614,7 @@ export class ChatSession {
     if (!this.agentGate) this.agentGate = new PermissionGate((m, c) => ctx.promptPermission(m, c));
     const s = this.agentSession;
     const gate = this.agentGate;
-    s.messages.push({ role: 'user', content: text });
+    s.messages.push({ role: 'user', content: text, attachments });
 
     const director = pickDirector(roster, ctx.directorModel?.())!;
     handlers.onModel(`agencia · director ${director.model}`);
@@ -1095,7 +1131,7 @@ export class ChatSession {
     text: string,
     account: ActiveAccount,
     handlers: TurnHandlers,
-    attachments?: string[]
+    attachments?: MediaAttachment[]
   ): Promise<void> {
     const ctx = this.backend.getAgentContext?.();
     if (!ctx) {
@@ -1123,19 +1159,35 @@ export class ChatSession {
     }
     // Visión: las imágenes adjuntas viajan como partes image_url (data URL);
     // los demás adjuntos se mencionan por ruta para que el agente los lea.
-    const images = (attachments ?? []).filter(isImageFile);
-    const others = (attachments ?? []).filter((a) => !isImageFile(a));
-    const userText = others.length ? `${text}\n\nArchivos adjuntos: ${others.join(', ')}` : text;
+    const images = (attachments ?? []).filter((a) => a.kind === 'image');
+    if (
+      images.length > 0 &&
+      oai.provider === 'nvidia' &&
+      (!oai.profile || !profileAcceptsKind(oai.profile, 'image'))
+    ) {
+      handlers.onError(
+        'Este modelo NVIDIA no declara soporte de vision. Importa el snippet de un modelo VLM o cambia de cuenta antes de adjuntar imagenes.'
+      );
+      return;
+    }
+    const others = (attachments ?? []).filter((a) => a.kind !== 'image');
+    const extracted = others.map((a) => {
+      const content = extractAttachmentText(a);
+      return content ? `--- ${a.name} ---\n${content}` : `${a.name}: ${a.path}`;
+    });
+    const userText = extracted.length ? `${text}\n\nArchivos adjuntos:\n${extracted.join('\n\n')}` : text;
+    let userMessage: AgentMessage;
     if (images.length > 0) {
       const parts: ContentPart[] = [{ type: 'text', text: userText }];
       for (const img of images) {
-        const url = imageToDataUrl(img);
+        const url = attachmentToDataUrl(img);
         if (url) parts.push({ type: 'image_url', image_url: { url } });
       }
-      s.messages.push({ role: 'user', content: parts });
+      userMessage = { role: 'user', content: parts, attachments };
     } else {
-      s.messages.push({ role: 'user', content: userText });
+      userMessage = { role: 'user', content: userText, attachments };
     }
+    s.messages.push(userMessage);
     handlers.onModel(oai.model);
 
     // The user's linked MCP tools (namespaced mcp__server__tool) join the
@@ -1247,6 +1299,8 @@ export class ChatSession {
       signal: this.abort?.signal,
     });
 
+    // Binary image data is transient; metadata is enough to rebuild previews.
+    if (Array.isArray(userMessage.content)) userMessage.content = userText;
     // Persist whatever really happened (tools already ran even on error).
     try {
       ctx.store.save(s);
@@ -1319,7 +1373,7 @@ export class ChatSession {
   }
 
   /** Serve a turn from a web-chat account via the browser daemon. */
-  private runWebTurn(text: string, account: ActiveAccount, handlers: TurnHandlers, attachments?: string[]): Promise<void> {
+  private runWebTurn(text: string, account: ActiveAccount, handlers: TurnHandlers, attachments?: MediaAttachment[]): Promise<void> {
     return new Promise((resolve) => {
       const runner = this.backend.getWebRunner?.(account.id, account.web!.provider, account.web!.profileDir);
       if (!runner) {
@@ -1347,7 +1401,7 @@ export class ChatSession {
             resolve();
           },
         },
-        { model: this.webModel ?? undefined, toggles: this.webToggles, files: attachments }
+        { model: this.webModel ?? undefined, toggles: this.webToggles, files: attachments?.map((a) => a.path) }
       );
     });
   }

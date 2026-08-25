@@ -2,7 +2,6 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <!-- img-src permite mostrar las imágenes generadas (llegan como data: URL). -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}}; img-src {{cspSource}} data: https:;" />
   <link rel="stylesheet" href="{{styleUri}}" />
   <title>KeyRotator Chat</title>
@@ -10,26 +9,34 @@
 <body>
   <section class="chat">
     <header class="chat-header">
-      <div class="title">
-        <span class="dot"></span>
-        <span id="chatTitle">Nueva conversación</span>
+      <div class="chat-identity">
+        <div class="product-line">
+          <span class="product-mark" aria-hidden="true">K</span>
+          <span>KeyRotator</span>
+          <span class="live-state"><span class="dot"></span>Listo</span>
+        </div>
+        <div id="chatTitle" class="conversation-title">Nueva conversación</div>
       </div>
-      <!-- Account menu (switch model + Dashboard) -->
+
       <div class="acct-wrap">
-        <button id="acctBtn" class="acct-btn"><span id="activeAccount">—</span> ▾</button>
-        <div id="acctMenu" class="menu hidden">
+        <button id="acctBtn" class="acct-btn" aria-label="Cambiar modo o administrar modelos" aria-haspopup="menu">
+          <span class="acct-icon" aria-hidden="true"></span>
+          <span id="activeAccount">Sin cuenta</span>
+          <span class="chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div id="acctMenu" class="menu hidden" role="menu">
           <div class="menu-label">Modo de trabajo</div>
           <button class="menu-item mode-item active" data-mode="individual">
-            <b>● Modo individual</b><small>Un solo modelo — el que elijas abajo a la izquierda.</small>
+            <b>● Individual</b><small>Trabaja con el modelo seleccionado.</small>
           </button>
           <button class="menu-item mode-item" data-mode="agency">
-            <b>○ Modo agencia</b><small>Un director investiga qué modelo sirve para cada parte, los pone a trabajar en paralelo e integra el resultado.</small>
+            <b>○ Agencia</b><small>Un director reparte el trabajo e integra el resultado.</small>
           </button>
           <button class="menu-item mode-item" data-mode="images">
-            <b>○ Modo imágenes</b><small>Generar imágenes desde texto, o editar una que adjuntes. Solo salen modelos de imagen.</small>
+            <b>○ Imágenes</b><small>Genera una imagen o edita la que adjuntes.</small>
           </button>
           <div class="menu-sep"></div>
-          <button class="menu-item" data-act="pasteSnippet">＋ Agregar modelo (pegar código)</button>
+          <button class="menu-item" data-act="pasteSnippet">＋ Agregar modelo</button>
           <button class="menu-item" data-act="openDashboard">▦ Administrar modelos</button>
         </div>
       </div>
@@ -37,69 +44,88 @@
 
     <main id="messages" class="messages">
       <div class="welcome">
-        <h3>Chat</h3>
-        <p>Elige un chat en la barra lateral (KeyRotator) o escribe abajo para empezar uno nuevo. Escribe <b>/</b> para tus comandos y skills.</p>
+        <div class="welcome-mark" aria-hidden="true">K</div>
+        <h1>¿En qué trabajamos?</h1>
+        <p>Escribe un mensaje o abre una conversación desde la barra lateral.</p>
       </div>
     </main>
 
-    <!-- Composer with slash autocomplete -->
-    <div class="composer-wrap">
-      <div id="slashMenu" class="slash-menu hidden"></div>
-      <div id="queueBar" class="queue-bar hidden"></div>
-      <div id="attachBar" class="attach-bar hidden"></div>
-      <footer class="composer">
-        <button id="plusBtn" class="plus-btn" title="Adjuntar / funciones">＋</button>
-        <div id="plusMenu" class="menu up hidden">
-          <button class="menu-item" data-act="attachFile">⤓ Adjuntar archivo</button>
-          <button class="menu-item" data-act="attachImage">🖼 Adjuntar imagen</button>
+    <div class="command-dock">
+      <div class="composer-wrap">
+        <div id="slashMenu" class="slash-menu hidden"></div>
+        <div id="queueBar" class="queue-bar hidden"></div>
+        <div id="attachBar" class="attach-bar hidden"></div>
+        <footer class="composer">
+          <div class="attach-control">
+            <button id="plusBtn" class="icon-btn plus-btn" title="Adjuntar o agregar funciones" aria-label="Adjuntar o agregar funciones">＋</button>
+            <div id="plusMenu" class="menu up hidden" role="menu">
+              <button class="menu-item" data-act="attachFile">Adjuntar archivo</button>
+              <button class="menu-item" data-act="attachImage">Adjuntar imagen</button>
+            </div>
+          </div>
+          <textarea id="input" aria-label="Mensaje" placeholder="Escribe un mensaje o usa / para comandos" rows="1"></textarea>
+          <button id="sendBtn" class="send-btn" title="Enviar" aria-label="Enviar mensaje">↑</button>
+        </footer>
+
+        <div class="bottom-bar">
+          <span id="claudeControls" class="ctl-group">
+            <label class="ctl">
+              <span>Modelo</span>
+              <select id="modelSelect"><option value="">Detectando…</option></select>
+            </label>
+            <span class="rail-divider" aria-hidden="true"></span>
+            <label class="ctl">
+              <span>Esfuerzo</span>
+              <select id="effortSelect">
+                <option value="">Default</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+            </label>
+          </span>
+
+          <span id="imageControls" class="ctl-group hidden">
+            <label class="ctl">
+              <span>Imagen</span>
+              <select id="imageModelSelect"></select>
+            </label>
+          </span>
+
+          <button id="researchBtn" class="toggle-btn" title="Buscar y contrastar fuentes antes de responder">Investigación</button>
+
+          <span id="webControls" class="ctl-group hidden">
+            <label class="ctl">
+              <span>Modelo</span>
+              <select id="webModelSelect"></select>
+            </label>
+            <span id="webToggles" class="toggles"></span>
+          </span>
+
+          <span class="spacer"></span>
+          <span id="usageBadge" class="model-badge hidden" title="Cuándo se reinicia tu límite de uso"></span>
+          <span id="activeModel" class="model-badge" title="Modelo activo">Sin modelo</span>
         </div>
-        <textarea id="input" placeholder="Escribe un mensaje…  ( / para comandos · Enter envía )" rows="1"></textarea>
-        <button id="sendBtn" title="Enviar">Enviar</button>
-      </footer>
-      <!-- Bottom controls (like native: model + effort + active model) -->
-      <div class="bottom-bar">
-        <!-- Claude controls (model + effort) -->
-        <span id="claudeControls" class="ctl-group">
-          <label class="ctl">
-            <span>Modelo</span>
-            <select id="modelSelect"><option value="">detectando…</option></select>
-          </label>
-          <label class="ctl">
-            <span>Esfuerzo</span>
-            <select id="effortSelect">
-              <option value="">Default</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-              <option value="max">max</option>
-            </select>
-          </label>
-        </span>
-        <!-- Modo imágenes: su propio selector, solo modelos de imagen. -->
-        <span id="imageControls" class="ctl-group hidden">
-          <label class="ctl">
-            <span>Modelo de imagen</span>
-            <select id="imageModelSelect"></select>
-          </label>
-        </span>
-        <!-- Investigación profunda: apagada por defecto (si no, hasta un
-             "hola" dispara búsquedas). -->
-        <button id="researchBtn" class="toggle-btn" title="Investigación profunda: busca en la web y contrasta varias fuentes antes de responder">🔬 Investigación profunda</button>
-        <!-- Web-chat controls (DeepSeek model + feature toggles) -->
-        <span id="webControls" class="ctl-group hidden">
-          <label class="ctl">
-            <span>Modelo</span>
-            <select id="webModelSelect"></select>
-          </label>
-          <span id="webToggles" class="toggles"></span>
-        </span>
-        <span class="spacer"></span>
-        <span id="usageBadge" class="model-badge hidden" title="Cuándo se reinicia tu límite de uso"></span>
-        <span id="activeModel" class="model-badge" title="Modelo en uso (reportado por Claude)">—</span>
       </div>
     </div>
   </section>
+
+  <div id="mediaViewer" class="media-viewer hidden" role="dialog" aria-modal="true" aria-labelledby="viewerTitle">
+    <div class="viewer-toolbar">
+      <strong id="viewerTitle">Vista previa</strong>
+      <span id="viewerMeta"></span>
+      <button id="viewerOpen" class="viewer-action">Abrir original</button>
+      <button id="viewerReveal" class="viewer-action">Mostrar en carpeta</button>
+      <button id="viewerClose" class="viewer-icon" aria-label="Cerrar vista previa">×</button>
+    </div>
+    <div class="viewer-stage">
+      <button id="viewerPrev" class="viewer-nav" aria-label="Imagen anterior">‹</button>
+      <img id="viewerImage" alt="" />
+      <button id="viewerNext" class="viewer-nav" aria-label="Imagen siguiente">›</button>
+    </div>
+  </div>
 
   <script src="{{scriptUri}}"></script>
 </body>

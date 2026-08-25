@@ -1,5 +1,6 @@
 import { waitForSlot } from '../chat/openaiChat.js';
 import { AGENT_TOOLS } from './tools.js';
+import type { MediaAttachment } from '../chat/mediaAttachments.js';
 
 /**
  * The agent's call→execute-tools→reinject loop over an OpenAI-compatible
@@ -22,6 +23,7 @@ export type ContentPart =
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | ContentPart[] | null;
+  attachments?: MediaAttachment[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }

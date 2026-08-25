@@ -19,11 +19,12 @@ import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
 import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
 import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
-import { AgentStore, isAgentSessionId } from './agent/agentStore.js';
+import { AgentStore, isAgentSessionId, messageText } from './agent/agentStore.js';
 import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
 import { listSkillNames, findSkills } from './agent/tools.js';
 import { parseSnippet, snippetHasData } from './core/snippetParser.js';
 import { analyzeViability } from './agent/aiTools.js';
+import { inferNvidiaProfile, type NvidiaModelProfile } from './agent/nvidiaProfiles.js';
 
 const HISTORY_KEY = 'keyRotator.history';
 const CHAT_PROVIDER = 'anthropic';
@@ -615,6 +616,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Request params (temperature, top_p, max_tokens, seed) captured from the
   // pasted sample code, applied to every request of that account.
   const OAI_PARAMS_KEY = 'keyRotator.openaiParamsByAccount';
+  const NVIDIA_PROFILES_KEY = 'keyRotator.nvidiaProfilesByAccount';
+  const getNvidiaProfiles = (): Record<string, NvidiaModelProfile> =>
+    context.globalState.get<Record<string, NvidiaModelProfile>>(NVIDIA_PROFILES_KEY, {});
+  const setNvidiaProfile = (profile: NvidiaModelProfile): void => {
+    const profiles = getNvidiaProfiles();
+    profiles[profile.accountId] = profile;
+    void context.globalState.update(NVIDIA_PROFILES_KEY, profiles);
+  };
   const getOaiParams = (accountId: string): Record<string, number> | undefined =>
     context.globalState.get<Record<string, Record<string, number>>>(OAI_PARAMS_KEY, {})[accountId];
   const setOaiParams = (accountId: string, params: Record<string, number>) => {
@@ -720,6 +729,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
     if (parsed.model) setOaiModel(id, parsed.model);
     if (Object.keys(parsed.params).length) setOaiParams(id, parsed.params);
+    if (provider === 'nvidia') setNvidiaProfile(inferNvidiaProfile(id, parsed));
     await context.globalState.update('keyRotator.preferredChatAccount', id);
     refreshUI();
     ChatPanel.refreshIfOpen();
@@ -936,6 +946,7 @@ export function activate(context: vscode.ExtensionContext) {
             model: openAIModel(pinned),
             provider: pinned.provider,
             params: getOaiParams(pinned.id),
+            profile: pinned.provider === 'nvidia' ? getNvidiaProfiles()[pinned.id] : undefined,
           },
         };
       }
@@ -961,6 +972,7 @@ export function activate(context: vscode.ExtensionContext) {
             model: openAIModel(firstApi),
             provider: firstApi.provider,
             params: getOaiParams(firstApi.id),
+            profile: firstApi.provider === 'nvidia' ? getNvidiaProfiles()[firstApi.id] : undefined,
           },
         };
       }
@@ -1019,6 +1031,7 @@ export function activate(context: vscode.ExtensionContext) {
           model: openAIModel(next),
           provider: next.provider,
           params: getOaiParams(next.id),
+          profile: next.provider === 'nvidia' ? getNvidiaProfiles()[next.id] : undefined,
         },
       };
     }
@@ -1143,7 +1156,11 @@ export function activate(context: vscode.ExtensionContext) {
           cwd: s.cwd,
           messages: s.messages
             .filter((m) => (m.role === 'user' || m.role === 'assistant') && !!m.content)
-            .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.content as string })),
+            .map((m) => ({
+              role: m.role as 'user' | 'assistant',
+              text: messageText(m.content),
+              attachments: m.attachments,
+            })),
         };
       }
       return loadSessionAsync(id);
@@ -1263,6 +1280,7 @@ export function activate(context: vscode.ExtensionContext) {
         .filter((a) => isOpenAIProvider(a.provider))
         .map((a) => ({ accountId: a.id, model: openAIModel(a) || a.label }))
         .sort((x, y) => x.model.localeCompare(y.model)),
+    listNvidiaProfiles: () => Object.values(getNvidiaProfiles()),
     getAgentContext: () => ({
       defaultCwd: agentDefaultCwd,
       promptPermission: async (message: string) => {

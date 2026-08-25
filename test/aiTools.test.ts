@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { htmlToText, parseDuckResults, sourcesForDepth, imageToDataUrl, isImageFile } from '../src/agent/aiTools.js';
+import { generateImage, htmlToText, parseDuckResults, sourcesForDepth, imageToDataUrl, isImageFile } from '../src/agent/aiTools.js';
 import { messageText, newAgentSession, sessionTitle } from '../src/agent/agentStore.js';
 import { listSkillNames, readSkill } from '../src/agent/tools.js';
 
@@ -58,6 +58,36 @@ test('isImageFile / imageToDataUrl handle real files and reject non-images', () 
     fs.writeFileSync(txt, 'hola');
     assert.equal(imageToDataUrl(txt), null);
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('generateImage uses the same verified NVIDIA genai endpoint as image mode', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kr-generate-'));
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    urls.push(String(input));
+    return new Response(
+      JSON.stringify({ artifacts: [{ base64: 'iVBORw0KGgo=' }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }) as typeof fetch;
+  try {
+    const result = await generateImage(
+      {
+        getCwd: () => dir,
+        apiKey: 'nvapi-test',
+        endpoint: 'https://integrate.api.nvidia.com/v1',
+        provider: 'nvidia',
+      },
+      'a lighthouse',
+      'black-forest-labs/flux.1-dev'
+    );
+    assert.equal(urls[0], 'https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev');
+    assert.match(result, /guardada/i);
+  } finally {
+    globalThis.fetch = originalFetch;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

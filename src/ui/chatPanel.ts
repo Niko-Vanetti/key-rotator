@@ -2,8 +2,16 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { ChatSession, type ChatBackend } from '../chat/chatSession.js';
-import { IMAGE_MODELS } from '../agent/imageModels.js';
+import { imageProfiles } from '../agent/nvidiaProfiles.js';
+import {
+  attachmentToDataUrl,
+  inspectAttachment,
+  MAX_IMAGE_BYTES,
+  type MediaAttachment,
+  type MediaOrigin,
+} from '../chat/mediaAttachments.js';
 
 interface IncomingMessage {
   type: string;
@@ -31,7 +39,8 @@ export class ChatPanel {
   /** Per-panel account override (null = global preferred account). */
   private accountId: string | null = null;
   /** Files queued by the "+" menu to upload into the web chat on next send. */
-  private pendingWebFiles: string[] = [];
+  private pendingAttachments: MediaAttachment[] = [];
+  private knownAttachments = new Map<string, MediaAttachment>();
 
   private constructor(
     private extensionUri: vscode.Uri,
@@ -98,6 +107,31 @@ export class ChatPanel {
 
   private post(msg: Record<string, unknown>): void {
     void this.panel.webview.postMessage(msg);
+  }
+
+  private queueAttachment(file: string, origin: MediaOrigin, owned: boolean): void {
+    const result = inspectAttachment(file, origin, owned);
+    if (!result.ok) {
+      this.post({ type: 'info', text: result.message });
+      if (owned) {
+        try { fs.unlinkSync(file); } catch { /* best-effort */ }
+      }
+      return;
+    }
+    this.pendingAttachments.push(result.attachment);
+    this.knownAttachments.set(result.attachment.id, result.attachment);
+    this.post({
+      type: 'webAttach',
+      attachment: this.attachmentForWeb(result.attachment),
+    });
+  }
+
+  private attachmentForWeb(attachment: MediaAttachment): Record<string, unknown> {
+    this.knownAttachments.set(attachment.id, attachment);
+    return {
+      ...attachment,
+      previewUri: attachmentToDataUrl(attachment) ?? undefined,
+    };
   }
 
   private currentAccountLabel(): string {
@@ -172,11 +206,28 @@ export class ChatPanel {
    * las API keys de chat) y fija el primero como elegido.
    */
   private postImageModels(): void {
-    const models = IMAGE_MODELS.map((m) => ({ id: m.id, label: m.label, note: m.note }));
-    const current = this.session.currentImageModel || models[0]?.id || '';
-    this.session.setImageModel(current);
-    this.post({ type: 'imageModels', models, selected: current });
-    this.post({ type: 'model', model: current });
+    const profiles = imageProfiles(this.backend.listNvidiaProfiles?.() ?? []);
+    const models = profiles.map((profile) => ({
+      id: profile.accountId,
+      label: profile.model,
+      note: profile.capabilities.includes('image-edit') ? 'Genera y edita' : 'Genera',
+    }));
+    const selected =
+      (this.accountId && profiles.some((profile) => profile.accountId === this.accountId)
+        ? this.accountId
+        : models[0]?.id) ?? '';
+    const profile = profiles.find((item) => item.accountId === selected);
+    this.accountId = profile?.accountId ?? null;
+    this.session.setAccount(this.accountId);
+    this.session.setImageModel(profile?.model ?? '');
+    this.post({ type: 'imageModels', models, selected });
+    this.post({ type: 'model', model: profile?.model ?? '' });
+    if (!profile) {
+      this.post({
+        type: 'info',
+        text: 'Importa desde NVIDIA Build el snippet de un modelo de imagen para habilitar este modo.',
+      });
+    }
   }
 
   /** Push models: cached list instantly, then network-refreshed in background. */
@@ -218,7 +269,11 @@ export class ChatPanel {
     this.post({ type: 'title', title: name });
     const loaded = await this.backend.loadHistory(id);
     this.session.setActiveSession(id, loaded?.cwd ?? null);
-    this.post({ type: 'history', messages: loaded?.messages ?? [], activeId: id });
+    const messages = (loaded?.messages ?? []).map((m) => ({
+      ...m,
+      attachments: m.attachments?.map((a) => this.attachmentForWeb(a)),
+    }));
+    this.post({ type: 'history', messages, activeId: id });
     this.post(this.metaMsg(id));
   }
 
@@ -318,10 +373,17 @@ export class ChatPanel {
             : '🔬 Investigación profunda desactivada: responderá directo (solo buscará si le pides algo que lo exija).',
         });
         break;
-      case 'setImageModel':
-        this.session.setImageModel((msg.value ?? '').trim());
-        this.post({ type: 'model', model: msg.value ?? '' });
+      case 'setImageModel': {
+        const profile = imageProfiles(this.backend.listNvidiaProfiles?.() ?? [])
+          .find((item) => item.accountId === (msg.value ?? '').trim());
+        if (!profile) break;
+        this.accountId = profile.accountId;
+        this.session.setAccount(profile.accountId);
+        this.session.setImageModel(profile.model);
+        this.post({ type: 'model', model: profile.model });
+        this.post(this.metaMsg(this.session.currentSessionId));
         break;
+      }
       case 'setMode': {
         const mode = msg.value === 'agency' ? 'agency' : msg.value === 'images' ? 'images' : 'individual';
         this.session.setMode(mode);
@@ -363,10 +425,7 @@ export class ChatPanel {
         if (isWeb || isAgent) {
           // Web chat uploads the file; the agent gets it as an attachment
           // (images travel as vision parts, other files as paths to read).
-          for (const u of picked) {
-            this.pendingWebFiles.push(u.fsPath);
-            this.post({ type: 'webAttach', name: u.fsPath.split(/[\\/]/).pop(), path: u.fsPath });
-          }
+          for (const u of picked) this.queueAttachment(u.fsPath, 'picker', false);
         } else {
           // Claude CLI: reference the path with @ so it reads the file.
           this.post({ type: 'insert', text: picked.map((u) => `@${u.fsPath} `).join('') });
@@ -379,14 +438,17 @@ export class ChatPanel {
       case 'pasteImage': {
         if (!msg.data) break;
         try {
+          if (Buffer.byteLength(msg.data, 'base64') > MAX_IMAGE_BYTES) {
+            this.post({ type: 'info', text: 'La imagen pegada supera el límite de 20 MB.' });
+            break;
+          }
           const ext = (msg.mime ?? 'image/png').split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
-          const dir = path.join(os.tmpdir(), 'keyrotator-pegadas');
+          const dir = path.join(os.homedir(), 'Documents', 'KeyRotator', 'adjuntos');
           fs.mkdirSync(dir, { recursive: true });
           const name = msg.name && /\.[a-z0-9]+$/i.test(msg.name) ? msg.name : `imagen-${Date.now()}.${ext}`;
-          const file = path.join(dir, name.replace(/[^\w.-]+/g, '_'));
+          const file = path.join(dir, `${randomUUID()}-${name.replace(/[^\w.-]+/g, '_')}`);
           fs.writeFileSync(file, Buffer.from(msg.data, 'base64'));
-          this.pendingWebFiles.push(file);
-          this.post({ type: 'webAttach', name: path.basename(file), path: file });
+          this.queueAttachment(file, 'paste', true);
         } catch (e) {
           this.post({ type: 'info', text: `No pude guardar la imagen pegada: ${(e as Error).message}` });
         }
@@ -414,21 +476,37 @@ export class ChatPanel {
           this.post({ type: 'info', text: 'No pude resolver la ruta de lo soltado (¿era una carpeta?).' });
           break;
         }
-        for (const p of paths) {
-          this.pendingWebFiles.push(p);
-          this.post({ type: 'webAttach', name: p.split(/[\\/]/).pop(), path: p });
-        }
+        for (const p of paths) this.queueAttachment(p, 'drop', false);
         break;
       }
-      case 'removeWebFile':
-        if (msg.value) this.pendingWebFiles = this.pendingWebFiles.filter((p) => p !== msg.value);
+      case 'removeWebFile': {
+        if (!msg.value) break;
+        const removed = this.pendingAttachments.find((a) => a.id === msg.value || a.path === msg.value);
+        if (removed?.owned && removed.origin === 'paste') {
+          try { fs.unlinkSync(removed.path); } catch { /* best-effort */ }
+        }
+        this.pendingAttachments = this.pendingAttachments.filter((a) => a.id !== msg.value && a.path !== msg.value);
+        if (removed) this.knownAttachments.delete(removed.id);
         break;
+      }
+      case 'openAttachment':
+      case 'revealAttachment': {
+        const attachment = msg.id ? this.knownAttachments.get(msg.id) : undefined;
+        if (!attachment || !fs.existsSync(attachment.path)) {
+          this.post({ type: 'info', text: 'El archivo ya no está disponible en disco.' });
+          break;
+        }
+        const uri = vscode.Uri.file(attachment.path);
+        if (msg.type === 'openAttachment') await vscode.commands.executeCommand('vscode.open', uri);
+        else await vscode.commands.executeCommand('revealFileInOS', uri);
+        break;
+      }
 
       case 'send': {
         const text = (msg.text ?? '').trim();
         if (!text) return;
-        const files = this.pendingWebFiles.slice();
-        this.pendingWebFiles = [];
+        const files = this.pendingAttachments.slice();
+        this.pendingAttachments = [];
         await this.session.sendMessage(
           text,
           {

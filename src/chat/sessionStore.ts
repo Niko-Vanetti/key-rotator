@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { MediaAttachment } from './mediaAttachments.js';
 
 /**
  * Reads the SAME local Claude Code session store (`~/.claude/projects/...`)
@@ -20,6 +21,7 @@ export interface SessionSummary {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   text: string;
+  attachments?: MediaAttachment[];
 }
 
 /** The default Claude config home (`~/.claude` or $CLAUDE_CONFIG_DIR). */

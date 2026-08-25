@@ -20,9 +20,13 @@
   const plusBtn = $('plusBtn');
   const plusMenu = $('plusMenu');
   const slashMenu = $('slashMenu');
+  const mediaViewer = $('mediaViewer');
+  const viewerImage = $('viewerImage');
 
   let streamingEl = null, streamingRaw = '', sending = false, activeId = null;
   let slashCommands = [], slashItems = [], slashSel = -1;
+  const pendingMedia = new Map();
+  let viewerItems = [], viewerIndex = 0;
 
   // ---------- markdown (CSP-safe) ----------
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -62,17 +66,28 @@
   let assistantName = 'Claude';
   const clearWelcome = () => { const w = messagesEl.querySelector('.welcome'); if (w) w.remove(); };
   const scrollToBottom = () => { messagesEl.scrollTop = messagesEl.scrollHeight; };
-  function buildMessageEl(role, text, asMarkdown) {
+  function buildMessageEl(role, text, asMarkdown, attachments) {
     const row = document.createElement('div'); row.className = 'msg ' + role;
     const who = document.createElement('div'); who.className = 'who'; who.textContent = role === 'user' ? 'Tú' : assistantName;
     const body = document.createElement('div'); body.className = 'body';
     if (asMarkdown) body.innerHTML = renderMarkdown(text || ''); else body.textContent = text || '';
     row.appendChild(who); row.appendChild(body);
+    body.querySelectorAll('img').forEach((img) => {
+      img.tabIndex = 0;
+      img.addEventListener('click', () => openMediaViewer([{ id: '', name: img.alt || 'Imagen', previewUri: img.src }], 0));
+      img.addEventListener('keydown', (e) => { if (e.key === 'Enter') img.click(); });
+    });
+    if (attachments && attachments.length) {
+      const gallery = document.createElement('div');
+      gallery.className = 'message-attachments';
+      attachments.forEach((a) => gallery.appendChild(renderAttachmentTile(a, false)));
+      row.appendChild(gallery);
+    }
     return { row, body };
   }
-  function addMessage(role, text, asMarkdown) {
+  function addMessage(role, text, asMarkdown, attachments) {
     clearWelcome();
-    const { row, body } = buildMessageEl(role, text, asMarkdown);
+    const { row, body } = buildMessageEl(role, text, asMarkdown, attachments);
     messagesEl.appendChild(row); scrollToBottom(); return body;
   }
 
@@ -101,7 +116,7 @@
       const frag = document.createDocumentFragment();
       for (let i = from; i < renderedStart; i++) {
         const m = allMessages[i];
-        frag.appendChild(buildMessageEl(m.role, m.text, m.role === 'assistant').row);
+        frag.appendChild(buildMessageEl(m.role, m.text, m.role === 'assistant', m.attachments).row);
       }
       btn.after(frag);
       renderedStart = from;
@@ -129,7 +144,7 @@
       const frag = document.createDocumentFragment();
       for (; i < end; i++) {
         const m = allMessages[i];
-        frag.appendChild(buildMessageEl(m.role, m.text, m.role === 'assistant').row);
+        frag.appendChild(buildMessageEl(m.role, m.text, m.role === 'assistant', m.attachments).row);
       }
       messagesEl.appendChild(frag);
       scrollToBottom();
@@ -146,9 +161,11 @@
   // (lo que escribas se encola).
   function setSending(s) {
     sending = s;
-    sendBtn.textContent = s ? 'Detener' : 'Enviar';
+    sendBtn.textContent = s ? '■' : '↑';
     sendBtn.classList.toggle('stopping', s);
-    sendBtn.title = s ? 'Detener la respuesta' : 'Enviar';
+    const label = s ? 'Detener la respuesta' : 'Enviar mensaje';
+    sendBtn.title = label;
+    sendBtn.setAttribute('aria-label', label);
     sendBtn.disabled = false;
     inputEl.disabled = false;
     if (!s) inputEl.focus();
@@ -287,21 +304,112 @@
 
   // ---------- attachments (web chat file upload) ----------
   const attachBar = $('attachBar');
-  function addAttachChip(name, path) {
-    attachBar.classList.remove('hidden');
-    const chip = document.createElement('span');
-    chip.className = 'attach-chip';
-    chip.dataset.path = path;
-    chip.innerHTML = '📎 <span></span> <button class="attach-x" title="Quitar">✕</button>';
-    chip.querySelector('span').textContent = name || path;
-    chip.querySelector('.attach-x').addEventListener('click', () => {
-      vscode.postMessage({ type: 'removeWebFile', value: path });
-      chip.remove();
-      if (!attachBar.children.length) attachBar.classList.add('hidden');
-    });
-    attachBar.appendChild(chip);
+  const formatBytes = (size) => size < 1024 ? size + ' B' : size < 1048576 ? (size / 1024).toFixed(1) + ' KB' : (size / 1048576).toFixed(1) + ' MB';
+  function renderAttachmentTile(attachment, pending) {
+    const tile = document.createElement('div');
+    tile.className = 'attachment-tile';
+    tile.dataset.id = attachment.id || '';
+    const preview = document.createElement('button');
+    preview.className = 'attachment-preview';
+    preview.type = 'button';
+    preview.title = attachment.kind === 'image' ? 'Ver imagen' : attachment.name;
+    if (attachment.kind === 'image' && attachment.previewUri) {
+      const img = document.createElement('img');
+      img.src = attachment.previewUri;
+      img.alt = '';
+      preview.appendChild(img);
+      preview.addEventListener('click', () => {
+        const images = [...(pending ? pendingMedia.values() : [attachment])].filter((a) => a.kind === 'image' && a.previewUri);
+        openMediaViewer(images, Math.max(0, images.findIndex((a) => a.id === attachment.id)));
+      });
+    } else {
+      preview.textContent = (attachment.kind || 'file').slice(0, 4).toUpperCase();
+      preview.disabled = true;
+    }
+    const info = document.createElement('span');
+    info.className = 'attachment-info';
+    const name = document.createElement('span');
+    name.className = 'attachment-name';
+    name.textContent = attachment.name;
+    const size = document.createElement('span');
+    size.className = 'attachment-size';
+    size.textContent = formatBytes(attachment.size || 0) + ' · ' + (attachment.kind || 'archivo');
+    info.append(name, size);
+    tile.append(preview, info);
+    if (pending) {
+      const remove = document.createElement('button');
+      remove.className = 'attachment-remove';
+      remove.title = 'Quitar';
+      remove.setAttribute('aria-label', 'Quitar ' + attachment.name);
+      remove.textContent = '×';
+      remove.addEventListener('click', () => {
+        vscode.postMessage({ type: 'removeWebFile', value: attachment.id });
+        pendingMedia.delete(attachment.id);
+        tile.remove();
+        if (!attachBar.children.length) attachBar.classList.add('hidden');
+      });
+      tile.appendChild(remove);
+    }
+    return tile;
   }
-  function clearAttachChips() { attachBar.innerHTML = ''; attachBar.classList.add('hidden'); }
+  function addAttachChip(attachment) {
+    if (!attachment || !attachment.id) return;
+    attachBar.classList.remove('hidden');
+    pendingMedia.set(attachment.id, attachment);
+    attachBar.appendChild(renderAttachmentTile(attachment, true));
+  }
+  function clearAttachChips() {
+    pendingMedia.clear();
+    attachBar.innerHTML = '';
+    attachBar.classList.add('hidden');
+  }
+
+  function paintViewer() {
+    const item = viewerItems[viewerIndex];
+    if (!item) return;
+    viewerImage.src = item.previewUri;
+    viewerImage.alt = item.name || 'Imagen';
+    $('viewerTitle').textContent = item.name || 'Vista previa';
+    $('viewerMeta').textContent = formatBytes(item.size || 0);
+    $('viewerPrev').disabled = viewerItems.length < 2;
+    $('viewerNext').disabled = viewerItems.length < 2;
+    $('viewerOpen').disabled = !item.id;
+    $('viewerReveal').disabled = !item.id;
+  }
+  function openMediaViewer(items, index) {
+    viewerItems = (items || []).filter((a) => a && a.previewUri);
+    if (!viewerItems.length) return;
+    viewerIndex = Math.max(0, Math.min(index || 0, viewerItems.length - 1));
+    paintViewer();
+    mediaViewer.classList.remove('hidden');
+    $('viewerClose').focus();
+  }
+  function closeMediaViewer() {
+    mediaViewer.classList.add('hidden');
+    viewerImage.removeAttribute('src');
+  }
+  function moveViewer(delta) {
+    if (!viewerItems.length) return;
+    viewerIndex = (viewerIndex + delta + viewerItems.length) % viewerItems.length;
+    paintViewer();
+  }
+  $('viewerClose').addEventListener('click', closeMediaViewer);
+  $('viewerPrev').addEventListener('click', () => moveViewer(-1));
+  $('viewerNext').addEventListener('click', () => moveViewer(1));
+  $('viewerOpen').addEventListener('click', () => {
+    const item = viewerItems[viewerIndex];
+    if (item?.id) vscode.postMessage({ type: 'openAttachment', id: item.id });
+  });
+  $('viewerReveal').addEventListener('click', () => {
+    const item = viewerItems[viewerIndex];
+    if (item?.id) vscode.postMessage({ type: 'revealAttachment', id: item.id });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (mediaViewer.classList.contains('hidden')) return;
+    if (e.key === 'Escape') closeMediaViewer();
+    if (e.key === 'ArrowLeft') moveViewer(-1);
+    if (e.key === 'ArrowRight') moveViewer(1);
+  });
 
   // ---------- chat ----------
   // Mensajes escritos mientras el agente responde: se encolan y salen solos
@@ -375,9 +483,8 @@
   function send() {
     const text = inputEl.value.trim();
     if (!text) return;
-    const atts = [...attachBar.querySelectorAll('.attach-chip span')].map((s) => s.textContent);
-    const label = atts.length ? text + '\n\n📎 ' + atts.join(', ') : text;
-    addMessage('user', label, false);
+    const atts = [...pendingMedia.values()];
+    addMessage('user', text, false, atts);
     inputEl.value = ''; autoGrow(); slashMenu.classList.add('hidden');
     clearAttachChips();
     if (sending) { queue.push(text); renderQueue(); return; }
@@ -558,7 +665,7 @@
         break;
       }
       case 'webControls': renderWebControls(msg); break;
-      case 'webAttach': addAttachChip(msg.name, msg.path); break;
+      case 'webAttach': addAttachChip(msg.attachment); break;
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'mode': applyMode(msg.mode); break;
       case 'imageModels': renderImageModels(msg.models, msg.selected); break;
