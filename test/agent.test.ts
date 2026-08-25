@@ -316,3 +316,67 @@ test('runAgentTurn avisa cuando el modelo termina mudo en vez de devolver vacío
     globalThis.fetch = realFetch;
   }
 });
+
+// ---- presupuesto de llamadas por turno (guarda del modo agencia) ----------
+
+test('runAgentTurn respeta un presupuesto compartido de llamadas', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  // El modelo siempre pide otra herramienta → sin tope, haría infinitas
+  // llamadas. El presupuesto lo corta.
+  globalThis.fetch = (async () => {
+    calls++;
+    return sseResponse([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c', function: { name: 'list_directory', arguments: '{}' } }] } }] },
+      { choices: [{ finish_reason: 'tool_calls', delta: {} }] },
+    ]);
+  }) as typeof fetch;
+  try {
+    const budget = { remaining: 3 };
+    const res = await runAgentTurn({
+      endpoint: 'https://x.test/v1',
+      apiKey: 'k',
+      model: 'm',
+      messages: [{ role: 'user', content: 'loop' }],
+      execute: async () => 'ok',
+      onDelta: () => {},
+      onToolStart: () => {},
+      maxSteps: 50, // el corte debe venir del presupuesto, no de maxSteps
+      budget,
+    });
+    assert.equal(calls, 3, 'no debe pasar de las 3 llamadas del presupuesto');
+    assert.equal(budget.remaining, 0);
+    assert.ok('text' in res, 'devuelve lo que tenga, sin error');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('el presupuesto compartido se reparte entre varias ejecuciones del turno', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    sseResponse([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c', function: { name: 'list_directory', arguments: '{}' } }] } }] },
+      { choices: [{ finish_reason: 'tool_calls', delta: {} }] },
+    ])) as typeof fetch;
+  try {
+    const budget = { remaining: 5 };
+    const opts = {
+      endpoint: 'https://x.test/v1',
+      apiKey: 'k',
+      model: 'm',
+      execute: async () => 'ok',
+      onDelta: () => {},
+      onToolStart: () => {},
+      maxSteps: 50,
+      budget,
+    };
+    await runAgentTurn({ ...opts, messages: [{ role: 'user' as const, content: 'a' }] });
+    const left = budget.remaining;
+    await runAgentTurn({ ...opts, messages: [{ role: 'user' as const, content: 'b' }] });
+    assert.ok(left < 5, 'la primera ejecución consumió parte del presupuesto');
+    assert.equal(budget.remaining, 0, 'la segunda agota lo que quedaba');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

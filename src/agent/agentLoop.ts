@@ -139,6 +139,13 @@ export interface AgentTurnOpts {
   params?: Record<string, number>;
   /** Full tool list for this turn (defaults to AGENT_TOOLS). */
   tools?: unknown[];
+  /**
+   * Presupuesto de llamadas al modelo COMPARTIDO entre varias ejecuciones (p.
+   * ej. todos los pasos de la agencia en un mismo turno). Cada petición
+   * descuenta 1; al llegar a 0 la ejecución se detiene con lo que tenga. Evita
+   * que un turno de agencia dispare decenas de peticiones sin control.
+   */
+  budget?: { remaining: number };
 }
 
 export type AgentTurnResult = { text: string } | { error: string; rateLimited?: boolean };
@@ -149,6 +156,11 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<AgentTurnResult
 
   for (let step = 0; step < maxSteps; step++) {
     if (opts.signal?.aborted) return { text: pieces.join('\n\n') };
+    // Presupuesto compartido agotado: se corta aquí (lo hecho se conserva).
+    if (opts.budget && opts.budget.remaining <= 0) {
+      return { text: pieces.join('\n\n') || '(sin presupuesto de llamadas restante en este turno)' };
+    }
+    if (opts.budget) opts.budget.remaining--;
     const res = await streamCall(opts, opts.onRetry);
     if ('error' in res) return res;
 

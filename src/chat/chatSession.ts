@@ -502,6 +502,13 @@ export class ChatSession {
    * NVIDIA Build's free tier is 40 rpm; stay a few under it as margin.
    */
   private static readonly RPM_CAPS: Record<string, number> = { nvidia: 35 };
+  /**
+   * Tope de peticiones al modelo por turno de agencia (investigación +
+   * trabajadores en paralelo + síntesis, cada uno multi-paso). Sin esto un
+   * solo mensaje podía disparar ~90 llamadas; 40 deja margen de sobra para un
+   * trabajo real y corta los descontroles.
+   */
+  private static readonly AGENCY_CALL_BUDGET = 40;
 
   /**
    * MODO IMÁGENES: genera una imagen desde el texto, o EDITA la que hayas
@@ -620,6 +627,10 @@ export class ChatSession {
     handlers.onModel(`agencia · director ${director.model}`);
     handlers.onInfo(`🏢 Modo agencia — director: ${director.model} · modelos disponibles: ${roster.length}`);
 
+    // Presupuesto de llamadas COMPARTIDO por todo el turno (director +
+    // trabajadores + síntesis). Se pasa a cada runAgentTurn de este turno.
+    const budget = { remaining: ChatSession.AGENCY_CALL_BUDGET };
+
     // Llamada interna de la agencia: su texto no se transmite, pero SÍ hay que
     // reportar actividad o el chat parece congelado (el usuario no ve nada).
     const runOne = (m: AgencyModel, prompt: string, sys: string, who = m.model) =>
@@ -664,6 +675,7 @@ export class ChatSession {
         params: m.params,
         signal: this.abort?.signal,
         maxSteps: 15,
+        budget,
       });
 
     // Si el equipo YA existe, este mensaje va al responsable del área: sale
@@ -798,6 +810,7 @@ export class ChatSession {
       throttleKey: ChatSession.RPM_CAPS[director.provider] ? `${director.provider}:${director.accountId}` : undefined,
       params: director.params,
       signal: this.abort?.signal,
+      budget,
     });
     const finalText = 'error' in finalRes ? '' : finalRes.text;
     s.messages.push({ role: 'assistant', content: finalText || '(sin síntesis)' });
@@ -828,6 +841,9 @@ export class ChatSession {
     ctx: AgentBackendContext,
     runOne: (m: AgencyModel, prompt: string, sys: string) => Promise<{ text: string } | { error: string }>
   ): Promise<void> {
+    // Presupuesto propio para el seguimiento (evaluación + respuesta del
+    // especialista o director). runOne ya trae el suyo del turno que lo creó.
+    const budget = { remaining: ChatSession.AGENCY_CALL_BUDGET };
     const team = s.team!;
     handlers.onInfo(`🏢 Equipo activo: ${team.map((t) => `${t.role} (${t.model})`).join(' · ')}`);
     handlers.onStatus?.('El director decide quién atiende esto');
@@ -889,6 +905,7 @@ export class ChatSession {
           throttleKey: ChatSession.RPM_CAPS[model.provider] ? `${model.provider}:${model.accountId}` : undefined,
           params: model.params,
           signal: this.abort?.signal,
+          budget,
         });
         if (!('error' in res) && res.text) member.lastWork = res.text.slice(0, 8000);
         this.finishAgencyTurn(s, ctx, res, handlers, member.role);
@@ -939,6 +956,7 @@ export class ChatSession {
         throttleKey: ChatSession.RPM_CAPS[m.provider] ? `${m.provider}:${m.accountId}` : undefined,
         params: m.params,
         signal: this.abort?.signal,
+        budget,
       });
       this.finishAgencyTurn(s, ctx, res, handlers, 'director');
       return;
@@ -1034,6 +1052,7 @@ export class ChatSession {
       throttleKey: ChatSession.RPM_CAPS[model.provider] ? `${model.provider}:${model.accountId}` : undefined,
       params: model.params,
       signal: this.abort?.signal,
+      budget,
     });
     if (!('error' in res) && res.text) owner.lastWork = res.text.slice(0, 8000);
     this.finishAgencyTurn(s, ctx, res, handlers, owner.role);
