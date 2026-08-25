@@ -45,7 +45,7 @@ export async function streamOpenAIChat(opts: OAIStreamOptions): Promise<OAIStrea
         Authorization: `Bearer ${opts.apiKey}`,
         'Content-Type': 'application/json',
         // OpenRouter asks for these for attribution / rankings (optional).
-        'HTTP-Referer': 'https://github.com/Nikorasu-Vanetti/key-rotator',
+        'HTTP-Referer': 'https://github.com/Niko-Vanetti/key-rotator',
         'X-Title': 'KeyRotator',
       },
       body: JSON.stringify({ model: opts.model, messages: opts.messages, stream: true, ...(opts.params ?? {}) }),

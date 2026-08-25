@@ -290,7 +290,7 @@ async function streamCall(
         headers: {
           Authorization: `Bearer ${opts.apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://github.com/Nikorasu-Vanetti/key-rotator',
+          'HTTP-Referer': 'https://github.com/Niko-Vanetti/key-rotator',
           'X-Title': 'KeyRotator',
         },
         body: JSON.stringify({

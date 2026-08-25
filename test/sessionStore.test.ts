@@ -24,9 +24,9 @@ test('parseCustomTitle returns null when there is no custom title', () => {
 test('parseCwd returns the first recorded cwd', () => {
   const ls = lines([
     { type: 'queue-operation', sessionId: 's1' },
-    { type: 'user', cwd: 'C:\\Users\\Niko Vanetti', message: { content: 'hi' } },
+    { type: 'user', cwd: 'C:\\Users\\dev', message: { content: 'hi' } },
   ]);
-  assert.strictEqual(parseCwd(ls), 'C:\\Users\\Niko Vanetti');
+  assert.strictEqual(parseCwd(ls), 'C:\\Users\\dev');
 });
 
 test('parseHistory extracts user/assistant text, deduped and filtered', () => {

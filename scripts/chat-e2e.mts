@@ -17,7 +17,7 @@ const backend: ChatBackend = {
   rotateFrom: async () => null,
   getModel: () => 'claude-haiku-4-5',
   getEffort: () => undefined,
-  getCwd: () => 'C:\\Users\\Niko Vanetti',
+  getCwd: () => 'C:\\Users\\dev',
   getLauncher: () => ({ command: 'claude', baseArgs: [], useShell: true }),
   listSessions: () => [],
   loadHistory: async () => null,
@@ -52,7 +52,7 @@ if (!/FUNCIONA/i.test(r1)) {
 
 // Case 2: resume a shared-store-only session under the isolated profile.
 const resumed = new ChatSession(backend);
-resumed.setActiveSession(sharedSessionId, 'C:\\Users\\Niko Vanetti');
+resumed.setActiveSession(sharedSessionId, 'C:\\Users\\dev');
 const r2 = await run('resume', resumed, 'Antes te pedí que dijeras una palabra en mayúsculas. Repítela, solo esa palabra.');
 console.log('CASE2 cross-store resume reply:', JSON.stringify(r2.slice(0, 100)));
 if (!/PING/i.test(r2)) {

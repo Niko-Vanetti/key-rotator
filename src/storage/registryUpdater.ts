@@ -3,7 +3,7 @@ import type { ProviderPattern } from '../types.js';
 import seedPatterns from '../../data/patterns.json';
 
 const PATTERNS_KEY = 'keyRotator.patterns';
-const REGISTRY_URL = 'https://raw.githubusercontent.com/Nikorasu-Vanetti/key-rotator/main/data/patterns.json';
+const REGISTRY_URL = 'https://raw.githubusercontent.com/Niko-Vanetti/key-rotator/main/data/patterns.json';
 
 /**
  * Loads provider patterns from globalState (falling back to the bundled seed),

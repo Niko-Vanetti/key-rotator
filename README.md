@@ -1,15 +1,56 @@
-# KeyRotator
+<div align="center">
 
-Extensión de VS Code que convierte tus API keys de **NVIDIA Build** (y **OpenRouter**)
-en un agente con herramientas —o en una agencia de varios modelos coordinados— dentro
-del editor: lee y escribe archivos, ejecuta comandos, busca en la web, genera imágenes
-e investiga a fondo, todo con tu aprobación explícita en cada paso sensible.
+# 🔑 KeyRotator
 
-Cada API key que agregas equivale a un modelo. No hay configuración de proveedor
-genérico ni credenciales sueltas: pegas el código de ejemplo de build.nvidia.com y la
-extensión detecta el resto sola.
+**Convierte tus API keys de NVIDIA Build en un agente de IA dentro de VS Code.**
+**Turn your NVIDIA Build API keys into an AI agent inside VS Code.**
 
-## Instalación
+Un asistente que lee y escribe archivos, ejecuta comandos, busca en la web, genera y
+edita imágenes, y hasta coordina varios modelos como una agencia — todo con tu
+aprobación en cada paso sensible.
+
+**[🇪🇸 Español](#-español) · [🇬🇧 English](#-english)**
+
+Hecho con cariño por [@Niko-Vanetti](https://github.com/Niko-Vanetti) 💛
+
+</div>
+
+---
+
+<a id="-español"></a>
+
+## 🇪🇸 Español
+
+KeyRotator es una extensión de VS Code que convierte tus API keys de **NVIDIA Build**
+(y **OpenRouter**) en un **agente con herramientas** —o en una **agencia de varios
+modelos coordinados**— dentro del editor: lee y escribe archivos, ejecuta comandos,
+busca en la web, genera y edita imágenes e investiga a fondo, siempre con tu aprobación
+explícita en cada paso sensible.
+
+La idea que la mueve es simple: **cada API key que pegas es un modelo**. No hay
+configuración de proveedor genérico ni credenciales sueltas — pegas el bloque de código
+de ejemplo de build.nvidia.com y la extensión detecta sola el endpoint, el modelo, la
+key y los parámetros.
+
+### ✨ Qué puede hacer
+
+- **Agente con herramientas** — leer, escribir, listar y borrar archivos; ejecutar
+  comandos; buscar en la web y leer páginas; cargar tus skills; recordar conversaciones
+  anteriores; generar imágenes. Escribir/borrar/ejecutar siempre pide tu permiso.
+- **Modo agencia** — un modelo director investiga qué modelo tuyo rinde mejor en cada
+  parte, forma un equipo, trabaja en paralelo, integra el resultado y hasta puede
+  relevar o proponerte contratar modelos nuevos.
+- **Modo imágenes** — generar y editar imágenes con los modelos de imagen de NVIDIA
+  Build; el selector solo muestra modelos capaces de hacerlo.
+- **Analizador de viabilidad** — mide velocidad, consistencia y soporte de herramientas
+  de cada modelo y da un veredicto (✅ recomendado / ⚠️ usable / ⛔ no viable /
+  ❔ no concluyente) que queda guardado y se refresca solo.
+- **Multimodal** — visión (adjuntar, pegar con Ctrl+V o arrastrar imágenes), con un
+  sistema que deduce del código pegado qué sabe hacer cada modelo.
+- **Skills y MCP** — importa skills desde una carpeta entera, sincroniza con tu Claude
+  Code y usa tus servidores MCP (con aprobación por llamada).
+
+### 🚀 Instalación
 
 ```bash
 npm install
@@ -17,197 +58,146 @@ npm run package
 code --install-extension key-rotator-*.vsix
 ```
 
-Después de instalar, recarga la ventana de VS Code (`Ctrl+Shift+P` →
-**Developer: Reload Window**) para que la extensión quede activa.
+Luego recarga la ventana (`Ctrl+Shift+P` → **Developer: Reload Window**).
 
-## Actualizar a la última versión
+### 🧭 Primeros pasos
 
-Si ya tienes KeyRotator instalado y quieres traerte los cambios nuevos:
+1. Abre el panel **KeyRotator** en la barra de actividad (ícono de llave).
+2. Usa el botón 📋 **Pegar código** de la vista Chats, o abre el **Dashboard** y su
+   caja de texto.
+3. Pega el bloque de código de ejemplo de build.nvidia.com (o de OpenRouter), o solo tu
+   API key. Se detectan solos el proveedor, endpoint, modelo y parámetros.
+4. Si el código traía una key de ejemplo, se te pide la real en un campo oculto.
+5. La cuenta queda creada con el nombre del modelo y el chat se abre listo.
+
+### 🔄 Actualizar
 
 ```bash
-git pull                 # trae los cambios del repositorio
-npm install              # solo hace falta si cambiaron las dependencias
-npm run package          # regenera el .vsix
+git pull && npm install && npm run package
 code --install-extension key-rotator-*.vsix
 ```
 
-Luego **recarga la ventana** (`Ctrl+Shift+P` → **Developer: Reload Window**). Este
-paso no es opcional: VS Code mantiene en memoria la versión anterior hasta que
-recargas, así que sin él parecerá que la actualización no hizo nada.
+Recarga la ventana. Instalar el `.vsix` sobrescribe la versión anterior sin desinstalar
+ni pasar `--force`, y **no pierdes nada**: keys, configuración y chats se conservan.
 
-Notas:
+### 🔒 Seguridad
 
-- No hace falta desinstalar primero ni pasar `--force`: instalar el `.vsix` sobrescribe
-  la versión anterior aunque el número de versión no haya cambiado.
-- **No pierdes nada al actualizar.** Tus API keys siguen en el Secret Storage de VS
-  Code, la configuración y el estado de los modelos en el almacenamiento de la
-  extensión, y tus conversaciones, carpeta de trabajo, MCP y Skills en las carpetas
-  `Documents\KeyRotator*`. Actualizar solo reemplaza el código de la extensión.
-- Si algo se comporta raro después de actualizar, cierra VS Code por completo y vuelve
-  a abrirlo (una recarga de ventana no reinicia los procesos que la extensión haya
-  dejado corriendo).
+Las API keys se guardan solo en el **Secret Storage de VS Code** (cifrado por el
+sistema operativo). Nunca se escriben en el historial ni en archivos del repositorio.
+Todo lo que produce el agente queda confinado a su carpeta de trabajo; salir de ella al
+leer, escribir, borrar o ejecutar algo **requiere tu aprobación explícita**.
 
-## Primeros pasos
+### 📁 Carpetas que usa
 
-1. Abre el panel **KeyRotator** en la barra de actividad (ícono de llave).
-2. En la vista **Chats**, usa el botón 📋 ("Pegar código") —o abre el **Dashboard**
-   ("KeyRotator: Open Dashboard") y usa la caja de texto de la pestaña Modelos.
-3. Pega ahí el bloque de código de ejemplo de build.nvidia.com (o de OpenRouter) tal
-   cual, o solo tu API key. Se detectan automáticamente el proveedor, el endpoint, el
-   modelo y los parámetros (`temperature`, `top_p`, `max_tokens`, `seed`).
-4. Si el código traía una key de ejemplo (un marcador de posición), se te pide la real
-   en un campo oculto.
-5. La cuenta queda creada —con el nombre del modelo— y el chat se abre listo para
-   usarla.
-6. Repite para cada modelo. La pestaña **Modelos** del Dashboard muestra cada uno por
-   su nombre, con su veredicto de viabilidad y botones para probarlo o eliminarlo.
+- `Documents\KeyRotator` — carpeta de trabajo (scripts, resultados, `salidas\`).
+- `Documents\KeyRotator Chats` — historial de conversaciones (separado de Claude Code).
+- `Documents\KeyRotator Config` — tu MCP (`mcp.json`) y skills propias.
 
-## Verificar qué modelos funcionan de verdad
-
-El catálogo de modelos que devuelve la API no siempre coincide con lo que tu cuenta
-puede usar en la práctica: algunos dan error, otros tardan minutos en responder o
-nunca lo hacen. En el Dashboard (pestaña Modelos), el botón **Probar** de cada modelo
-corre un análisis real: dos peticiones para medir velocidad y consistencia, más una
-prueba de si el modelo invoca herramientas de verdad. El análisis se ejecuta también
-solo al agregar un modelo, y el veredicto queda guardado junto a él:
-
-- ✅ **recomendado** — responde rápido y soporta herramientas.
-- ⚠️ **usable** — funciona, pero con un aviso concreto (lento, inconsistente, o sin
-  soporte de herramientas).
-- ⛔ **no viable** — no respondió, o no es un modelo de chat; se excluye del equipo
-  del Modo agencia.
-- ❔ **no concluyente** — el proveedor no respondió a tiempo o rechazó por límite de
-  peticiones; no dice nada del modelo, vuelve a probarlo en un momento.
-
-## Chat — Modo individual
-
-- El selector **Modelo** (parte inferior) lista todos tus modelos —uno por API key—
-  en orden alfabético. Elegir uno cambia de cuenta al instante.
-- Arrastra un archivo sobre la conversación para que el agente lo lea (si está fuera
-  de su carpeta de trabajo, te pide aprobación antes).
-- El botón **+** adjunta un archivo o una imagen (visión, si el modelo la soporta).
-- El agente puede: leer, listar, crear y borrar archivos; ejecutar comandos; cambiar
-  su carpeta de trabajo; cargar tus Skills; buscar en tus conversaciones anteriores;
-  buscar en la web; leer una página completa; y generar imágenes.
-- El interruptor **🔬 Investigación profunda** está apagado por defecto: así, un
-  simple saludo no dispara búsquedas. Actívalo para que el modelo contraste varias
-  fuentes con fecha verificada antes de responder.
-- El botón **Enviar** se convierte en **Detener** mientras responde. Puedes seguir
-  escribiendo durante ese tiempo: los mensajes se encolan y se envían al terminar el
-  turno en curso.
-- Una línea de estado en vivo (con cronómetro) muestra qué está haciendo el modelo en
-  cada momento —buscando, leyendo un archivo, razonando, procesando el resultado de
-  una herramienta— para que nunca parezca congelado.
-
-## Chat — Modo agencia
-
-Se activa desde el menú ▾ junto al nombre de la cuenta activa. En este modo un
-**modelo director** (el mejor disponible, con preferencia por los de Google; también
-puedes fijarlo tú desde el Dashboard) organiza el trabajo en cuatro etapas:
-
-1. **Investigación** — decide qué disciplinas necesita la tarea (por ejemplo,
-   backend/frontend/seguridad para un programa) y qué modelo tuyo rinde mejor en
-   cada una, validando con búsquedas reales qué tan reciente es cada dato.
-2. **Preparación del entorno** — carga las Skills que la investigación identificó
-   como útiles y deja disponibles tus integraciones MCP.
-3. **Trabajo en paralelo** — cada especialista hace su parte a la vez, con su propia
-   API key y el mismo set de herramientas del modo individual.
-4. **Síntesis** — el director integra las entregas en una única respuesta.
-
-El equipo queda fijo para esa conversación: si luego dices que "esta parte no
-funciona", el director enruta el mensaje al responsable de esa área, que se presenta,
-investiga la causa real y la corrige. Si un especialista falla repetidamente, el
-director puede reemplazarlo por otro de tus modelos —pasándole el contexto de lo ya
-hecho— o, si ninguno da la talla, investigar en build.nvidia.com y proponerte un
-candidato con su currículum (fortalezas, evidencia con fecha, limitaciones). Tú
-decides si lo agregas; al avisar que ya está integrado, el modelo nuevo toma el
-puesto y continúa el trabajo pendiente.
-
-## Carpetas que usa
-
-- `Documents\KeyRotator` — carpeta de trabajo por defecto: ahí quedan los scripts,
-  archivos y resultados que genere el agente (subcarpeta `salidas\` para imágenes).
-- `Documents\KeyRotator Chats` — el historial de conversaciones, en su propio
-  almacén, separado del de Claude Code.
-- `Documents\KeyRotator Config` — tu configuración propia de MCP (`mcp.json`) y de
-  Skills (`skills\`).
-
-## MCP y Skills
-
-El Dashboard tiene pestañas para administrar tus servidores **MCP** y tus **Skills**
-(ver, editar, agregar, eliminar), con botones para sincronizarlos desde tu
-configuración de Claude Code (`~/.claude.json` y `~/.claude/skills`). Nota: las
-integraciones gestionadas por claude.ai (Canva, Google Drive, Gmail, Calendar) son
-OAuth y no se pueden vincular por esta vía; solo los servidores MCP que se lanzan con
-un comando propio funcionan aquí.
-
-## Barra lateral y de estado
-
-La barra lateral de KeyRotator muestra la vista **Chats** (tus conversaciones, con un
-botón para borrarlas). Los modelos se gestionan en el **Dashboard** (pestaña Modelos).
-El ítem de la barra de estado muestra cuántos de tus modelos están activos.
-
-## Soporte heredado: chat clásico de Claude
-
-Si no tienes ningún modelo de NVIDIA Build u OpenRouter configurado, el chat cae de
-vuelta a un modo clásico que conversa con Claude lanzando el CLI `claude` por debajo,
-con rotación entre cuentas de Anthropic. No es el flujo principal de la extensión,
-pero el código sigue ahí. Se controla con `keyRotator.chatMode`:
-
-- `full` (por defecto) — usa tu login de Claude tal cual, sin rotación.
-- `profiles` — login aislado por cuenta; rota entre ellas conservando las
-  integraciones de claude.ai.
-- `failover` — rota por API key (`ANTHROPIC_API_KEY`); requiere saldo de la Consola
-  de Anthropic, ya que tu suscripción Pro/Max no cubre llamadas por API key.
-
-## Configuración
-
-### Agente / Modo agencia
-
-| Setting | Default | Descripción |
-|---|---|---|
-| `keyRotator.agencyDirector` | `"auto"` | Qué modelo dirige la agencia. `"auto"` elige el mejor disponible; también puedes poner el id exacto de uno de tus modelos, o elegirlo en el Dashboard. |
-| `keyRotator.agentUseMcp` | `true` | Permite que el agente use tus servidores MCP. Cada llamada pide aprobación. |
-| `keyRotator.openRouterModel` | `""` | Modelo fijo opcional para cuentas de OpenRouter. Vacío = eliges desde el selector del chat. |
-| `keyRotator.geminiApiKey` | `""` | API key de Gemini para identificar proveedores desconocidos al pegar una key suelta (opcional). |
-| `keyRotator.healthCheckIntervalMinutes` | `5` | Frecuencia del chequeo de salud periódico por cuenta. |
-| `keyRotator.preferPrimary` | `true` | Volver a la cuenta de mayor prioridad cuando se recupera de un límite de uso. |
-
-### Chat clásico de Claude (heredado)
-
-| Setting | Default | Descripción |
-|---|---|---|
-| `keyRotator.chatMode` | `"full"` | `full` = login único sin rotación. `profiles` = login aislado por cuenta. `failover` = API key + rotación. |
-| `keyRotator.chatModel` | `""` | Modelo para el chat clásico (`opus`, `sonnet`, o un id completo). Vacío = default del CLI. |
-| `keyRotator.chatEffort` | `""` | Nivel de esfuerzo/razonamiento (`--effort`). Vacío = default del modelo. |
-| `keyRotator.chatMcpConfig` | `""` | Ruta a un JSON `{"mcpServers":{...}}` propio; se carga tanto en el chat clásico como en el agente. |
-| `keyRotator.chatExtraArgs` | `[]` | Argumentos extra para el CLI `claude` del chat clásico. |
-| `keyRotator.webChatBrowser` | `"auto"` | Navegador que usa el chat web (cuentas tipo DeepSeek). |
-| `keyRotator.webChatUseRealProfile` | `false` | Usar tu perfil real del navegador (con tu sesión de Google) en vez de uno aislado. |
-
-## Seguridad
-
-Las API keys se guardan exclusivamente en el Secret Storage de VS Code (cifrado por
-el sistema operativo). Nunca se escriben en el historial, las estadísticas ni en
-archivos del repositorio. Los archivos, scripts y comandos que produce el agente
-quedan confinados a su carpeta de trabajo; salir de ella —al leer, escribir, borrar o
-ejecutar algo— requiere tu aprobación explícita.
-
-## Limitación conocida
-
-VS Code no permite leer el output interno de un modelo mientras responde, así que la
-detección de problemas combina chequeos de salud periódicos, el análisis de
-viabilidad bajo demanda ("Probar conexión") y un comando manual
-("KeyRotator: Report Rate Limit on Active Account") para los casos detectados antes
-del próximo chequeo automático.
-
-## Desarrollo
+### 🛠️ Desarrollo
 
 ```bash
 npm install
-npm test       # corre los tests de la lógica core
+npm test       # tests de la lógica core
 npm run watch  # recompila en modo watch
 ```
 
-Presiona `F5` en VS Code (con este proyecto abierto) para lanzar una ventana de
-"Extension Development Host" con KeyRotator cargado.
+`F5` en VS Code lanza una ventana de desarrollo con la extensión cargada. Todos los
+ajustes viven bajo `keyRotator.*` en la configuración de VS Code.
+
+---
+
+<a id="-english"></a>
+
+## 🇬🇧 English
+
+KeyRotator is a VS Code extension that turns your **NVIDIA Build** (and **OpenRouter**)
+API keys into a **tool-using agent** — or a **coordinated agency of several models** —
+right inside the editor: it reads and writes files, runs commands, searches the web,
+generates and edits images, and researches in depth, always with your explicit approval
+on every sensitive step.
+
+The core idea is simple: **every API key you paste is a model**. No generic provider
+setup, no loose credentials — you paste the sample code block from build.nvidia.com and
+the extension figures out the endpoint, model, key and parameters on its own.
+
+### ✨ What it can do
+
+- **Tool-using agent** — read, write, list and delete files; run commands; search the
+  web and read pages; load your skills; recall past conversations; generate images.
+  Writing/deleting/running always asks for your permission.
+- **Agency mode** — a director model researches which of your models is best for each
+  part, forms a team, works in parallel, merges the result, and can even replace a
+  model or suggest hiring a new one.
+- **Image mode** — generate and edit images with NVIDIA Build's image models; the
+  picker only shows models that can do it.
+- **Viability analyzer** — measures each model's speed, consistency and tool support and
+  gives a verdict (✅ recommended / ⚠️ usable / ⛔ not viable / ❔ inconclusive) that is
+  saved and refreshed automatically.
+- **Multimodal** — vision (attach, paste with Ctrl+V, or drag images), with a system
+  that infers from the pasted code what each model can do.
+- **Skills & MCP** — import skills from a whole folder, sync with your Claude Code, and
+  use your MCP servers (with per-call approval).
+
+### 🚀 Installation
+
+```bash
+npm install
+npm run package
+code --install-extension key-rotator-*.vsix
+```
+
+Then reload the window (`Ctrl+Shift+P` → **Developer: Reload Window**).
+
+### 🧭 Getting started
+
+1. Open the **KeyRotator** panel in the activity bar (key icon).
+2. Use the 📋 **Paste code** button in the Chats view, or open the **Dashboard** and its
+   text box.
+3. Paste the sample code block from build.nvidia.com (or OpenRouter), or just your API
+   key. Provider, endpoint, model and parameters are detected automatically.
+4. If the code carried a placeholder key, you're asked for the real one in a hidden
+   field.
+5. The account is created under the model's name and the chat opens ready to go.
+
+### 🔄 Updating
+
+```bash
+git pull && npm install && npm run package
+code --install-extension key-rotator-*.vsix
+```
+
+Reload the window. Installing the `.vsix` overwrites the previous version without
+uninstalling or `--force`, and **you lose nothing**: keys, settings and chats are kept.
+
+### 🔒 Security
+
+API keys live only in **VS Code's Secret Storage** (OS-level encryption). They're never
+written to history or repository files. Everything the agent produces stays confined to
+its working folder; stepping outside it to read, write, delete or run something
+**requires your explicit approval**.
+
+### 📁 Folders it uses
+
+- `Documents\KeyRotator` — working folder (scripts, results, `salidas\`).
+- `Documents\KeyRotator Chats` — conversation history (separate from Claude Code).
+- `Documents\KeyRotator Config` — your MCP (`mcp.json`) and own skills.
+
+### 🛠️ Development
+
+```bash
+npm install
+npm test       # core-logic tests
+npm run watch  # rebuild in watch mode
+```
+
+Press `F5` in VS Code to launch a dev window with the extension loaded. All settings
+live under `keyRotator.*` in VS Code settings.
+
+---
+
+<div align="center">
+
+Ver el [CHANGELOG](CHANGELOG.md) para el historial de versiones · See the
+[CHANGELOG](CHANGELOG.md) for the version history.
+
+</div>
