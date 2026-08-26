@@ -197,6 +197,18 @@ live under `keyRotator.*` in VS Code settings.
 
 ---
 
+## 📄 Licencia · License
+
+KeyRotator es software libre bajo la licencia **[MIT](LICENSE)**: puedes usarlo,
+modificarlo y redistribuirlo libremente, conservando el aviso de copyright. El
+paquete incluye [software de terceros](THIRD-PARTY-NOTICES.md) bajo sus propias
+licencias (playwright-core, Apache-2.0).
+
+KeyRotator is free software under the **[MIT License](LICENSE)**: use, modify and
+redistribute it freely, keeping the copyright notice. The package bundles
+[third-party software](THIRD-PARTY-NOTICES.md) under its own licenses
+(playwright-core, Apache-2.0).
+
 <div align="center">
 
 Ver el [CHANGELOG](CHANGELOG.md) para el historial de versiones · See the

@@ -4,6 +4,7 @@
   "description": "Turn your NVIDIA Build / OpenRouter API keys into an AI agent inside VS Code: files, commands, web, images and a multi-model agency — with approval on every step.",
   "version": "0.2.0",
   "publisher": "niko-local",
+  "license": "MIT",
   "icon": "images/icon.png",
   "repository": {
     "type": "git",
