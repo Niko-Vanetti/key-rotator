@@ -12,7 +12,7 @@ async function main() {
     sourcemap: !production,
     platform: 'node',
     outfile: 'dist/extension.js',
-    external: ['vscode'],
+    external: ['vscode', '@xenova/transformers', 'onnxruntime-node', 'onnxruntime-web', 'sharp', 'ffmpeg-static'],
     logLevel: 'info',
   });
   if (watch) {

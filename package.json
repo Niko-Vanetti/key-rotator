@@ -2,7 +2,7 @@
   "name": "key-rotator",
   "displayName": "KeyRotator",
   "description": "Turn your NVIDIA Build / OpenRouter API keys into an AI agent inside VS Code: files, commands, web, images and a multi-model agency — with approval on every step.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "niko-local",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -243,7 +243,15 @@
         "keyRotator.webChatBrowser": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "opera-gx", "opera", "msedge", "brave", "vivaldi", "chrome"],
+          "enum": [
+            "auto",
+            "opera-gx",
+            "opera",
+            "msedge",
+            "brave",
+            "vivaldi",
+            "chrome"
+          ],
           "enumDescriptions": [
             "Auto: usa tu navegador por defecto si es Chromium (Opera/Edge/Brave/Vivaldi/Chrome); Chrome es la última opción y el Chromium de Playwright el último recurso.",
             "Opera GX",
@@ -281,8 +289,8 @@
   "scripts": {
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "package": "tsc --noEmit && node esbuild.js --production && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts test/snippetParser.test.ts test/mcp.test.ts test/aiTools.test.ts test/agency.test.ts test/status.test.ts test/viability.test.ts test/imageRunner.test.ts test/mediaAttachments.test.ts test/uiContract.test.ts"
+    "package": "tsc --noEmit && node esbuild.js --production && node scripts/stub-sharp.mjs && npx @vscode/vsce package --no-yarn",
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts test/snippetParser.test.ts test/mcp.test.ts test/aiTools.test.ts test/agency.test.ts test/status.test.ts test/viability.test.ts test/imageRunner.test.ts test/mediaAttachments.test.ts test/uiContract.test.ts test/docText.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -293,6 +301,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "@xenova/transformers": "^2.17.2",
     "playwright-core": "^1.49.1"
   }
 }

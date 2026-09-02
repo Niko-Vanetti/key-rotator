@@ -7,6 +7,23 @@ docs/**
 out/**
 node_modules/**
 !node_modules/playwright-core/**
+
+# --- Whisper local (transcripción de audio/vídeo) ---
+# Inclusiones PRECISAS (vsce no re-excluye bien tras un !dir/**): solo lo justo
+# para el backend nativo en Windows x64. transformers.js corre desde src/ (no
+# dist/), así que sus 37 MB de wasm quedan fuera solos.
+!node_modules/@xenova/transformers/package.json
+!node_modules/@xenova/transformers/src/**
+!node_modules/@huggingface/**
+!node_modules/sharp/**
+!node_modules/onnxruntime-common/package.json
+!node_modules/onnxruntime-common/dist/**
+!node_modules/onnxruntime-node/package.json
+!node_modules/onnxruntime-node/dist/**
+!node_modules/onnxruntime-node/bin/napi-v3/win32/x64/**
+!node_modules/onnxruntime-web/package.json
+!node_modules/onnxruntime-web/dist/ort-web.node.js
+
 .gitignore
 tsconfig.json
 esbuild.js

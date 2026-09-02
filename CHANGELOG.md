@@ -3,6 +3,27 @@
 Todas las versiones de KeyRotator y qué cambió en cada una. Las fechas son la
 del release. El formato sigue [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.0] — 2026-08-28
+
+### Agregado
+
+- **Lectura real de documentos**: al adjuntar (arrastrar, Ctrl+V o el botón) un
+  **PDF, Word (.docx), Excel (.xlsx) o PowerPoint (.pptx)**, la extensión extrae
+  su texto y lo pasa al modelo. Sin dependencias nuevas (solo `zlib` de Node);
+  soporta streams Flate y ASCII85 en PDF. No hace OCR: un PDF escaneado (solo
+  imágenes) no tiene texto que extraer.
+- **Transcripción de voz 100% local**: adjuntar **audio** (mp3, wav, m4a, ogg…)
+  o **vídeo** (se le saca la pista de audio) lo transcribe con Whisper corriendo
+  en tu propia máquina (transformers.js + onnxruntime nativo), sin enviar nada a
+  la nube. Usa `whisper-tiny` cuantizado para andar en equipos modestos; el
+  modelo (~40 MB) se descarga una sola vez a `KeyRotator Config/models`.
+  Requiere **ffmpeg** en el sistema para decodificar el audio.
+
+### Notas
+
+- El runtime de Whisper se empaqueta solo para **Windows x64** (el binario
+  nativo de otras plataformas queda fuera para no inflar el paquete).
+
 ## [0.2.0] — 2026-07-26
 
 Reorientación completa: de un rotador de API keys de Claude a un **agente y una

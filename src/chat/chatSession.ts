@@ -53,6 +53,7 @@ import {
   inspectAttachment,
   type MediaAttachment,
 } from './mediaAttachments.js';
+import { transcribeAudio } from './audioTranscribe.js';
 import {
   profileAcceptsKind,
   type NvidiaModelProfile,
@@ -1190,10 +1191,26 @@ export class ChatSession {
       return;
     }
     const others = (attachments ?? []).filter((a) => a.kind !== 'image');
-    const extracted = others.map((a) => {
+    // Audio y vídeo → transcripción de voz local (Whisper); ffmpeg saca la
+    // pista de audio incluso de un vídeo. El resto: texto extraído o su ruta.
+    const modelCacheDir = path.join(path.dirname(ctx.defaultCwd()), 'KeyRotator Config', 'models');
+    const extracted: string[] = [];
+    for (const a of others) {
+      if (a.kind === 'audio' || a.kind === 'video') {
+        try {
+          const transcript = await transcribeAudio(a.path, { modelCacheDir, onProgress: (m) => handlers.onInfo(m) });
+          extracted.push(
+            transcript ? `--- ${a.name} (transcripción) ---\n${transcript}` : `${a.name}: sin voz reconocible (${a.path})`
+          );
+        } catch (e) {
+          handlers.onInfo(`⚠ No pude transcribir ${a.name}: ${(e as Error).message}`);
+          extracted.push(`${a.name}: ${a.path}`);
+        }
+        continue;
+      }
       const content = extractAttachmentText(a);
-      return content ? `--- ${a.name} ---\n${content}` : `${a.name}: ${a.path}`;
-    });
+      extracted.push(content ? `--- ${a.name} ---\n${content}` : `${a.name}: ${a.path}`);
+    }
     const userText = extracted.length ? `${text}\n\nArchivos adjuntos:\n${extracted.join('\n\n')}` : text;
     let userMessage: AgentMessage;
     if (images.length > 0) {

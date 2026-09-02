@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { extractDocumentText } from './docText.js';
 
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 export const MAX_TEXT_CHARS = 100_000;
@@ -114,12 +115,25 @@ export function attachmentToDataUrl(attachment: MediaAttachment): string | null 
   }
 }
 
+const DOC_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+
 export function extractAttachmentText(attachment: MediaAttachment): string | null {
-  if (attachment.kind !== 'text') return null;
   try {
-    const bytes = fs.readFileSync(attachment.path);
-    if (bytes.subarray(0, Math.min(bytes.length, 8192)).includes(0)) return null;
-    return bytes.toString('utf8').slice(0, MAX_TEXT_CHARS);
+    if (attachment.kind === 'text') {
+      const bytes = fs.readFileSync(attachment.path);
+      if (bytes.subarray(0, Math.min(bytes.length, 8192)).includes(0)) return null;
+      return bytes.toString('utf8').slice(0, MAX_TEXT_CHARS);
+    }
+    if (attachment.kind === 'document' && DOC_MIMES.has(attachment.mime)) {
+      const text = extractDocumentText(fs.readFileSync(attachment.path), attachment.mime);
+      return text ? text.slice(0, MAX_TEXT_CHARS) : null;
+    }
+    return null;
   } catch {
     return null;
   }
