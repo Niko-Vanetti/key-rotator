@@ -17,8 +17,6 @@ import { SessionsTreeProvider } from './ui/sessionsTreeProvider.js';
 import { DashboardPanel, type DashboardCallbacks } from './ui/dashboardPanel.js';
 import { ChatPanel } from './ui/chatPanel.js';
 import type { ChatBackend, ActiveAccount } from './chat/chatSession.js';
-import { WebChatRunner, WEB_CAPS, WEB_PROVIDER_NAMES } from './chat/webChatRunner.js';
-import { listNamedSessions, loadSessionAsync, listSlashCommands, seedScanCache, exportScanCache, defaultProjectsRoot } from './chat/sessionStore.js';
 import { AgentStore, isAgentSessionId, messageText } from './agent/agentStore.js';
 import { McpConnection, type McpServerConfig } from './agent/mcpClient.js';
 import { listSkillNames, findSkills } from './agent/tools.js';
@@ -27,7 +25,6 @@ import { analyzeViability } from './agent/aiTools.js';
 import { inferNvidiaProfile, type NvidiaModelProfile } from './agent/nvidiaProfiles.js';
 
 const HISTORY_KEY = 'keyRotator.history';
-const CHAT_PROVIDER = 'anthropic';
 
 // Per-account model list cache (Models API results change rarely).
 const modelsCache = new Map<string, { at: number; models: { id: string; label: string }[] }>();
@@ -49,7 +46,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Seed the transcript scan cache from the last run so the Chats view and
   // panel open instantly even on a cold start (no re-reading MB of jsonl).
-  seedScanCache(context.globalState.get('keyRotator.scanCache', {}));
 
   // --- agent (NVIDIA Build / OpenRouter con herramientas) -------------------
   // Herramienta INDEPENDIENTE de Claude Code: sus chats viven en una carpeta
@@ -174,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
   let persistTimer: NodeJS.Timeout | undefined;
   const persistScanCache = () => {
     clearTimeout(persistTimer);
-    persistTimer = setTimeout(() => void context.globalState.update('keyRotator.scanCache', exportScanCache()), 2000);
+    persistTimer = undefined;
   };
 
   // Auto-sync the Chats list with the shared Claude store: watch
@@ -546,21 +542,8 @@ export function activate(context: vscode.ExtensionContext) {
   // --- chat backend ------------------------------------------------------
 
   type ChatMode = 'failover' | 'full' | 'profiles';
-  const getChatMode = (): ChatMode => {
-    const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatMode', 'full');
-    return m === 'failover' || m === 'profiles' ? m : 'full';
-  };
 
   /** Per-account CLAUDE_CONFIG_DIR (its own OAuth login) for `profiles` mode. */
-  const profileDir = (accountId: string): string => {
-    const dir = vscode.Uri.joinPath(context.globalStorageUri, 'profiles', accountId).fsPath;
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-    } catch {
-      // best-effort
-    }
-    return dir;
-  };
 
   const PREFERRED_KEY = 'keyRotator.preferredChatAccount';
   const getPreferredId = (): string | undefined => context.globalState.get<string>(PREFERRED_KEY);
@@ -572,31 +555,6 @@ export function activate(context: vscode.ExtensionContext) {
     return id ? keyManager.getAllMeta().find((a) => a.id === id) : undefined;
   };
 
-  // --- web-chat accounts (DeepSeek, … driven via a headless browser) --------
-  // Provider id is `<key>-web` (e.g. 'deepseek-web'); the daemon's provider key
-  // is that without the suffix.
-  const isWebProvider = (provider: string): boolean => provider.endsWith('-web');
-  const webProviderKey = (provider: string): string => provider.replace(/-web$/, '');
-  // Profile is keyed by PROVIDER (e.g. 'deepseek'), not account id: one web
-  // login per provider is reused by every account of that provider, so the
-  // single sign-in (their real DeepSeek session) just works.
-  const webProfileDir = (provider: string): string => {
-    const dir = vscode.Uri.joinPath(context.globalStorageUri, 'web-profiles', webProviderKey(provider)).fsPath;
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-    } catch {
-      // best-effort
-    }
-    return dir;
-  };
-  const webDaemonPath = vscode.Uri.joinPath(
-    context.extensionUri,
-    'src',
-    'ui',
-    'media',
-    'web-chat',
-    'bridge.mjs'
-  ).fsPath;
   // --- OpenAI-compatible API chat accounts (OpenRouter, …) ------------------
   const OPENAI_ENDPOINTS: Record<string, string> = {
     openrouter: 'https://openrouter.ai/api/v1',
@@ -755,499 +713,115 @@ export function activate(context: vscode.ExtensionContext) {
     return { ok: true, summary: `${resumen} ✓` };
   }
 
-  const getWebBrowserPref = (): string =>
-    vscode.workspace.getConfiguration('keyRotator').get<string>('webChatBrowser', 'auto') || 'auto';
-  const getWebRealProfile = (): boolean =>
-    vscode.workspace.getConfiguration('keyRotator').get<boolean>('webChatUseRealProfile', false);
-  // Runners are cached by PROFILE dir (= provider), so two accounts of the same
-  // provider share one browser/daemon and never fight over the locked profile.
-  const webRunners = new Map<string, WebChatRunner>();
-  const getWebRunner = (_accountId: string, provider: string, profile: string): WebChatRunner => {
-    let r = webRunners.get(profile);
-    if (!r) {
-      r = new WebChatRunner(process.execPath, webDaemonPath, provider, profile, getWebBrowserPref(), getWebRealProfile());
-      webRunners.set(profile, r);
-    }
-    return r;
-  };
 
-  /**
-   * "Probar conexión" for a web account: confirm the login is live, then send a
-   * real "Hola" and pass if the chat replies with non-error text.
-   */
-  async function testWebAccount(meta: AccountMeta): Promise<{ ok: boolean; detail: string }> {
-    const runner = getWebRunner(meta.id, webProviderKey(meta.provider), webProfileDir(meta.provider));
-    let ready: boolean;
-    try {
-      ready = await runner.isReady();
-    } catch (e) {
-      return { ok: false, detail: `no se pudo abrir el navegador (${(e as Error).message.slice(0, 50)})` };
-    }
-    if (!ready) {
-      return { ok: false, detail: 'sin sesión — usa "Iniciar sesión (cuenta web)"' };
-    }
-    return new Promise<{ ok: boolean; detail: string }>((resolve) => {
-      const timer = setTimeout(() => resolve({ ok: false, detail: 'sin respuesta (timeout)' }), 120000);
-      runner.send('Hola', {
-        onDelta: () => {},
-        onDone: (full) => {
-          clearTimeout(timer);
-          const t = full.trim();
-          resolve(t ? { ok: true, detail: `responde OK: "${t.slice(0, 40)}${t.length > 40 ? '…' : ''}"` } : { ok: false, detail: 'respuesta vacía' });
-        },
-        onError: (msg) => {
-          clearTimeout(timer);
-          resolve({ ok: false, detail: msg.slice(0, 80) });
-        },
-        onLoginNeeded: () => {
-          clearTimeout(timer);
-          resolve({ ok: false, detail: 'sin sesión iniciada' });
-        },
-      });
-    });
-  }
 
-  /**
-   * Open the headed browser so the user signs in once for a web account. Runs
-   * the daemon's `login` command in a dedicated process (the persistent
-   * profile can't be open headless and headed at once, so we tear down any
-   * cached runner first and reopen it afterwards).
-   */
-  async function startWebLogin(_accountId: string, provider: string, label: string): Promise<void> {
-    const dir = webProfileDir(provider);
-    const key = webProviderKey(provider);
-    // Free the chat runner so the headed login can own the (locked) profile.
-    const existing = webRunners.get(dir);
-    if (existing) {
-      existing.dispose();
-      webRunners.delete(dir);
-    }
-
-    const child = childProcess.spawn(process.execPath, [webDaemonPath, key, dir], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
-        KR_WEB_BROWSER: getWebBrowserPref(),
-        KR_WEB_REAL_PROFILE: getWebRealProfile() ? '1' : '0',
+  /** Build the runnable account for an API-key model (one key = one model). */
+  async function toActiveAccount(meta: AccountMeta): Promise<ActiveAccount | null> {
+    const key = await keyManager.getApiKey(meta.id);
+    if (!key) return null;
+    return {
+      id: meta.id,
+      label: meta.label,
+      openai: {
+        apiKey: key,
+        endpoint: openAIEndpoint(meta),
+        model: openAIModel(meta),
+        provider: meta.provider,
+        params: getOaiParams(meta.id),
+        profile: meta.provider === 'nvidia' ? getNvidiaProfiles()[meta.id] : undefined,
       },
-    });
-    const writeCmd = (o: Record<string, unknown>) => {
-      try {
-        child.stdin.write(JSON.stringify(o) + '\n');
-      } catch {
-        /* child gone */
-      }
     };
-    const quit = () => {
-      writeCmd({ cmd: 'quit' });
-      setTimeout(() => child.kill(), 1200);
-    };
-    const rl = readline.createInterface({ input: child.stdout });
-
-    await new Promise<void>((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-      rl.on('line', (line) => {
-        let o: { type?: string; ok?: boolean; message?: string };
-        try {
-          o = JSON.parse(line);
-        } catch {
-          return;
-        }
-        if (o.type === 'ready') {
-          // Open the clean login window and keep it open for the user.
-          writeCmd({ cmd: 'loginopen' });
-        } else if (o.type === 'loginopen') {
-          // Confirm-based: the user signs in at their pace, then presses Conectar.
-          void vscode.window
-            .showInformationMessage(
-              `Inicia sesión en "${label}" en la ventana del navegador que se abrió. Cuando ya estés dentro del chat, pulsa Conectar.`,
-              { modal: false },
-              'Conectar',
-              'Cancelar'
-            )
-            .then((choice) => {
-              if (choice === 'Conectar') {
-                writeCmd({ cmd: 'logincheck' });
-              } else {
-                quit();
-                finish();
-              }
-            });
-        } else if (o.type === 'login') {
-          vscode.window.showInformationMessage(
-            o.ok
-              ? `✅ "${label}": conectado. Ya puedes chatear con esta cuenta y cerrar el navegador.`
-              : `"${label}": no detecté la sesión. Asegúrate de haber entrado al chat y vuelve a intentarlo.`
-          );
-          quit();
-          finish();
-        } else if (o.type === 'fatal' || o.type === 'error') {
-          vscode.window.showErrorMessage(`KeyRotator (web): ${o.message ?? 'error'}`);
-          quit();
-          finish();
-        }
-      });
-      child.on('error', (e) => {
-        vscode.window.showErrorMessage(`KeyRotator (web): no se pudo abrir el navegador — ${e.message}`);
-        finish();
-      });
-      child.on('exit', () => finish());
-    });
   }
 
-  const sortedActiveAnthropic = (): AccountMeta[] => {
-    const list = keyManager
-      .getAllMeta()
-      .filter((a) => a.provider === CHAT_PROVIDER && a.status === 'active')
-      .sort((a, b) => a.priority - b.priority);
-    // Float the user-selected account to the front, if it's still active.
-    const pref = getPreferredId();
-    if (pref) {
-      const i = list.findIndex((a) => a.id === pref);
-      if (i > 0) list.unshift(list.splice(i, 1)[0]);
-    }
-    return list;
-  };
-
-  /** Resolve the account/credential the next turn should use. */
+  /** Resolve the model the next turn should use: the pinned one, else the first. */
   async function resolveActiveChatAccount(preferredId?: string | null): Promise<ActiveAccount | null> {
-    const mode = getChatMode();
+    const usable = () =>
+      keyManager
+        .getAllMeta()
+        .filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled')
+        .sort((a, b) => a.label.localeCompare(b.label));
 
-    // A panel pinned to a web account (DeepSeek, …) always uses the browser
-    // daemon; a pinned OpenAI-compatible account (OpenRouter, …) uses its API —
-    // both independent of chatMode (which only governs the Claude paths).
-    // Fall back to the globally-selected account (tree click) when the panel
-    // has no explicit pin, so picking OpenRouter/DeepSeek anywhere just works.
+    // El panel puede estar fijado a un modelo; si no, vale el elegido global.
     const pref = preferredId ?? getPreferredId();
-    if (pref) {
-      const pinned = keyManager.getAllMeta().find((a) => a.id === pref);
-      if (pinned && isWebProvider(pinned.provider)) {
-        return {
-          id: pinned.id,
-          label: pinned.label,
-          web: { provider: webProviderKey(pinned.provider), profileDir: webProfileDir(pinned.provider) },
-        };
-      }
-      if (pinned && isOpenAIProvider(pinned.provider)) {
-        const key = await keyManager.getApiKey(pinned.id);
-        if (!key) return null;
-        return {
-          id: pinned.id,
-          label: pinned.label,
-          openai: {
-            apiKey: key,
-            endpoint: openAIEndpoint(pinned),
-            model: openAIModel(pinned),
-            provider: pinned.provider,
-            params: getOaiParams(pinned.id),
-            profile: pinned.provider === 'nvidia' ? getNvidiaProfiles()[pinned.id] : undefined,
-          },
-        };
-      }
-    }
-
-    // Por defecto, la herramienta ES de NVIDIA Build / OpenRouter: usa el
-    // primer modelo configurado (orden alfabético). Sin esto, un usuario nuevo
-    // caía al login de Claude — que es lo que había que quitar.
-    const openaiAccounts = keyManager
-      .getAllMeta()
-      .filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled')
-      .sort((a, b) => a.label.localeCompare(b.label));
-    const firstApi = openaiAccounts[0];
-    if (firstApi) {
-      const key = await keyManager.getApiKey(firstApi.id);
-      if (key) {
-        return {
-          id: firstApi.id,
-          label: firstApi.label,
-          openai: {
-            apiKey: key,
-            endpoint: openAIEndpoint(firstApi),
-            model: openAIModel(firstApi),
-            provider: firstApi.provider,
-            params: getOaiParams(firstApi.id),
-            profile: firstApi.provider === 'nvidia' ? getNvidiaProfiles()[firstApi.id] : undefined,
-          },
-        };
-      }
-    }
-
-    // Soporte heredado: SOLO si el usuario tiene una cuenta de Claude de
-    // verdad. Si no hay ningún modelo, devolvemos null y el chat le pide
-    // pegar su código de NVIDIA Build (no inventamos un login de Claude).
-    if (!hasClaudeAccount()) return null;
-
-    // Full mode: the user's default logged-in Claude — managed MCPs, single
-    // account, no rotation.
-    if (mode === 'full') {
-      return { id: 'login', label: 'Claude (tu login)', useLogin: true };
-    }
-
-    const list = sortedActiveAnthropic();
-    // Per-panel choice wins while that account is still usable.
-    const meta = (preferredId ? list.find((a) => a.id === preferredId) : undefined) ?? list[0];
-    if (!meta) return null;
-
-    // Profiles mode: per-account OAuth login dir → managed MCPs + rotation.
-    if (mode === 'profiles') {
-      return { id: meta.id, label: meta.label, configDir: profileDir(meta.id) };
-    }
-
-    // Failover mode: API key billing.
-    const apiKey = await keyManager.getApiKey(meta.id);
-    if (!apiKey) return null;
-    return { id: meta.id, label: meta.label, apiKey };
+    const pinned = pref ? usable().find((a) => a.id === pref) : undefined;
+    const meta = pinned ?? usable()[0];
+    return meta ? toActiveAccount(meta) : null;
   }
 
-  /** Mark `accountId` exhausted (with reason), rotate, return next account. */
+  /** Mark `accountId` exhausted (with reason), rotate, return next model. */
   async function rotateChatFrom(accountId: string, reason?: string): Promise<ActiveAccount | null> {
     const accounts = keyManager.getAllMeta();
     const from = accounts.find((a) => a.id === accountId);
+    if (!from || !isOpenAIProvider(from.provider)) return null;
 
-    // OpenAI-compatible accounts (OpenRouter, NVIDIA Build, …) rotate among
-    // accounts of the SAME provider, independent of the Claude chatMode.
-    if (from && isOpenAIProvider(from.provider)) {
-      await keyManager.updateAccountMeta(accountId, {
-        status: /credit|saldo|billing|402|insufficient/i.test(reason ?? '') ? 'error' : 'rate-limited',
-        lastError: reason || 'límite de uso alcanzado',
-      });
-      const next = pickNextAccount(applyRateLimit(accounts, accountId), from.provider, accountId);
-      refreshUI();
-      if (!next) return null;
-      const key = await keyManager.getApiKey(next.id);
-      if (!key) return null;
-      return {
-        id: next.id,
-        label: next.label,
-        openai: {
-          apiKey: key,
-          endpoint: openAIEndpoint(next),
-          model: openAIModel(next),
-          provider: next.provider,
-          params: getOaiParams(next.id),
-          profile: next.provider === 'nvidia' ? getNvidiaProfiles()[next.id] : undefined,
-        },
-      };
-    }
-
-    const mode = getChatMode();
-    // No cross-account rotation in full (single-login) mode.
-    if (mode === 'full') return null;
-    // Credit/billing problems are persistent ('error', needs user action);
-    // usage limits are temporary ('rate-limited', auto-recovers).
+    // Un problema de saldo es persistente ('error'); un límite de uso se
+    // recupera solo ('rate-limited').
     const isCredit = /credit|saldo|billing|402|insufficient/i.test(reason ?? '');
     await keyManager.updateAccountMeta(accountId, {
       status: isCredit ? 'error' : 'rate-limited',
       lastError: reason || 'límite de uso alcanzado',
     });
 
-    const next = pickNextAccount(applyRateLimit(accounts, accountId), CHAT_PROVIDER, accountId);
+    const next = pickNextAccount(applyRateLimit(accounts, accountId), from.provider, accountId);
+    refreshUI();
     if (!next) {
-      refreshUI();
-      // Surface a clear "your APIs are unusable, check why" notice.
-      const broken = keyManager
-        .getAllMeta()
-        .filter((a) => a.provider === CHAT_PROVIDER && a.status !== 'active' && a.status !== 'disabled')
+      const broken = accounts
+        .filter((a) => isOpenAIProvider(a.provider) && a.status !== 'active' && a.status !== 'disabled')
         .map((a) => `"${a.label}": ${a.lastError ?? 'límite alcanzado'}`)
         .join(' · ');
-      void vscode.window
-        .showErrorMessage(
-          `KeyRotator: ninguna API de Anthropic se puede usar ahora — ${broken}. Revisa saldo/límites en la consola de Anthropic.`,
-          'Probar cuentas'
-        )
-        .then((pick) => {
-          if (pick === 'Probar cuentas') void vscode.commands.executeCommand('keyRotator.testAccount');
-        });
-      return null;
-    }
-
-    const logSwitch = async () =>
-      setHistory(
-        addHistoryEntry(getHistory(), {
-          timestamp: Date.now(),
-          fromAccountId: accountId,
-          fromLabel: from?.label ?? null,
-          toAccountId: next.id,
-          toLabel: next.label,
-          provider: CHAT_PROVIDER,
-          reason: 'rate-limit',
-        })
+      void vscode.window.showErrorMessage(
+        `KeyRotator: ningún modelo disponible ahora — ${broken || 'sin modelos activos'}.`
       );
-
-    if (mode === 'profiles') {
-      await logSwitch();
-      refreshUI();
-      return { id: next.id, label: next.label, configDir: profileDir(next.id) };
-    }
-
-    // Failover (API key) mode.
-    const full = await keyManager.getAccountWithKey(next.id);
-    if (!full) {
-      refreshUI();
       return null;
     }
-    await applyEnvVar(full);
-    await logSwitch();
+
+    const active = await toActiveAccount(next);
+    if (!active) return null;
+    // El historial del Dashboard registra TODA rotación (antes solo las de Claude).
+    await setHistory(
+      addHistoryEntry(getHistory(), {
+        timestamp: Date.now(),
+        fromAccountId: accountId,
+        fromLabel: from.label,
+        toAccountId: next.id,
+        toLabel: next.label,
+        provider: from.provider,
+        reason: 'rate-limit',
+      })
+    );
     refreshUI();
-    return { id: next.id, label: next.label, apiKey: full.apiKey };
+    return active;
   }
+
+  /** Skills disponibles para el agente (propias primero, luego las de Claude). */
+  const agentSkillNames = (): string[] => {
+    const own = listSkillNames([krSkillsDir]);
+    return own.length ? own : listSkillNames([claudeSkillsDir]);
+  };
 
   const chatBackend: ChatBackend = {
     resolveActiveAccount: resolveActiveChatAccount,
     rotateFrom: rotateChatFrom,
-    getModel: () => {
-      const m = vscode.workspace.getConfiguration('keyRotator').get<string>('chatModel', '').trim();
-      return m || undefined;
-    },
-    getEffort: () => {
-      const e = vscode.workspace.getConfiguration('keyRotator').get<string>('chatEffort', '').trim();
-      return e || undefined;
-    },
-    getCwd: () => {
-      // Prefer the open workspace folder so the chat inherits project-level
-      // context (CLAUDE.md, project MCPs, skills). Fall back to an isolated
-      // dir under globalStorage when no folder is open.
-      const folder = vscode.workspace.workspaceFolders?.[0];
-      if (folder) return folder.uri.fsPath;
-      const dir = vscode.Uri.joinPath(context.globalStorageUri, 'chat-sessions');
-      try {
-        fs.mkdirSync(dir.fsPath, { recursive: true });
-      } catch {
-        // best-effort; claude will still run from this path
-      }
-      return dir.fsPath;
-    },
-    getLauncher: () => {
-      const cfg = vscode.workspace.getConfiguration('keyRotator');
-      // `--bare` (failover mode) forces ANTHROPIC_API_KEY auth but disables the
-      // managed claude.ai MCPs/hooks; full mode omits it to inherit the login.
-      const baseArgs: string[] = getChatMode() === 'failover' ? ['--bare'] : [];
-
-      // Load the user's own MCP servers — works even under --bare, so the API
-      // mode keeps custom MCPs (the claude.ai-managed ones still need 'full').
-      const mcpConfig = cfg.get<string>('chatMcpConfig', '').trim();
-      if (mcpConfig) baseArgs.push('--mcp-config', mcpConfig);
-
-      // Escape hatch for --plugin-dir / --add-dir / --agents / --settings etc.
-      const extra = cfg.get<string[]>('chatExtraArgs', []);
-      if (Array.isArray(extra)) baseArgs.push(...extra.filter((a) => typeof a === 'string' && a.length > 0));
-
-      return {
-        // On Windows `claude` is a .cmd shim — resolve it via the shell. On
-        // POSIX, spawning through the shell also resolves it from PATH.
-        command: 'claude',
-        baseArgs,
-        useShell: true,
-      };
-    },
     listSessions: () => allSessions(),
     loadHistory: async (id: string) => {
-      // Agent sessions live in the agent's own store, not the Claude store.
-      if (isAgentSessionId(id)) {
-        const s = agentStore.load(id);
-        if (!s) return null;
-        return {
-          cwd: s.cwd,
-          messages: s.messages
-            .filter((m) => (m.role === 'user' || m.role === 'assistant') && !!m.content)
-            .map((m) => ({
-              role: m.role as 'user' | 'assistant',
-              text: messageText(m.content),
-              attachments: m.attachments,
-            })),
-        };
-      }
-      return loadSessionAsync(id);
+      const s = isAgentSessionId(id) ? agentStore.load(id) : null;
+      if (!s) return null;
+      return s.messages
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && !!m.content)
+        .map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          text: messageText(m.content),
+          attachments: m.attachments,
+        }));
     },
-    getSlashCommands: () => listSlashCommands(),
-    getCachedModels: (accountId?: string | null) => {
-      // Instant, sync: persisted cache from the last successful detection.
-      const list = sortedActiveAnthropic();
-      const meta = (accountId ? list.find((a) => a.id === accountId) : undefined) ?? list[0];
-      if (!meta) return FALLBACK_MODELS;
-      const mem = modelsCache.get(meta.id);
-      if (mem) return mem.models;
-      const persisted = context.globalState.get<Record<string, { id: string; label: string }[]>>(
-        'keyRotator.modelsByAccount',
-        {}
-      )[meta.id];
-      return persisted && persisted.length > 0 ? persisted : FALLBACK_MODELS;
-    },
-    listModels: async (accountId?: string | null) => {
-      // GitHub-Copilot-style detection via the Models API. Cached in memory
-      // (15 min) and persisted to globalState so the dropdown is instant.
-      const list = sortedActiveAnthropic();
-      const meta = (accountId ? list.find((a) => a.id === accountId) : undefined) ?? list[0];
-      if (!meta) return FALLBACK_MODELS;
-      const cached = modelsCache.get(meta.id);
-      if (cached && Date.now() - cached.at < 15 * 60_000) return cached.models;
-      const key = await keyManager.getApiKey(meta.id);
-      if (!key) return FALLBACK_MODELS;
-      try {
-        const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
-          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-          signal: AbortSignal.timeout(10000),
-        });
-        const json = (await res.json()) as { data?: { id: string; display_name?: string }[] };
-        if (Array.isArray(json.data) && json.data.length > 0) {
-          const models = json.data.map((m) => ({ id: m.id, label: m.display_name || m.id }));
-          modelsCache.set(meta.id, { at: Date.now(), models });
-          const all = context.globalState.get<Record<string, { id: string; label: string }[]>>(
-            'keyRotator.modelsByAccount',
-            {}
-          );
-          all[meta.id] = models;
-          void context.globalState.update('keyRotator.modelsByAccount', all);
-          return models;
-        }
-      } catch {
-        // network / auth error — fall back
-      }
-      const prior = modelsCache.get(meta.id)?.models;
-      return prior && prior.length > 0 ? prior : FALLBACK_MODELS;
-    },
+    getSlashCommands: () => agentSkillNames(),
     listChatAccounts: () => {
-      // Web accounts (DeepSeek, …) and OpenAI-compatible API accounts
-      // (OpenRouter, …) are switchable regardless of chatMode.
-      const extra = keyManager
+      const activeId = getPreferredId();
+      return keyManager
         .getAllMeta()
-        .filter((a) => isWebProvider(a.provider) || isOpenAIProvider(a.provider))
-        .map((a) => ({ id: a.id, label: a.label, active: false }));
-      // In 'full' mode the Claude side always uses the user's login, so only
-      // the web/API accounts are worth listing.
-      if (getChatMode() === 'full') return extra;
-      const activeId = sortedActiveAnthropic()[0]?.id;
-      const claude = keyManager
-        .getAllMeta()
-        .filter((a) => a.provider === CHAT_PROVIDER)
+        .filter((a) => isOpenAIProvider(a.provider) && a.status !== 'disabled')
+        .sort((a, b) => a.label.localeCompare(b.label))
         .map((a) => ({ id: a.id, label: a.label, active: a.id === activeId }));
-      return [...claude, ...extra];
-    },
-    getWebRunner,
-    getWebCapsFor: (accountId: string) => {
-      const meta = resolveMeta(accountId);
-      if (!meta || !isWebProvider(meta.provider)) return null;
-      return WEB_CAPS[webProviderKey(meta.provider)] ?? null;
-    },
-    getWebProviderName: (accountId: string) => {
-      const meta = resolveMeta(accountId);
-      if (!meta) return null;
-      if (isWebProvider(meta.provider)) {
-        const key = webProviderKey(meta.provider);
-        return WEB_PROVIDER_NAMES[key] ?? key;
-      }
-      // OpenAI-compatible API accounts: label the bubble with the MODEL
-      // (la cuenta ES el modelo — pedido del usuario), fallback al proveedor.
-      if (isOpenAIProvider(meta.provider)) {
-        return openAIModel(meta) || OPENAI_DISPLAY_NAMES[meta.provider] || meta.provider;
-      }
-      return null;
     },
     getApiChatModel: (accountId: string) => {
       const meta = resolveMeta(accountId);
@@ -1322,20 +896,11 @@ export function activate(context: vscode.ExtensionContext) {
         return out;
       },
       // Biblioteca propia primero; si está vacía, las skills de Claude.
-      skillNames: () => {
-        const own = listSkillNames([krSkillsDir]);
-        return own.length ? own : listSkillNames([claudeSkillsDir]);
-      },
+      skillNames: () => agentSkillNames(),
       skillRoots: () => [krSkillsDir, claudeSkillsDir],
       mcpTools: () => getAgentMcpTools(),
     }),
   };
-
-  // ¿El usuario configuró de verdad una cuenta de Claude/Anthropic? El chat
-  // clásico de Claude es soporte heredado: solo aparece si hay una cuenta así,
-  // NUNCA por defecto (antes salía "Claude (tu login)" a quien no tenía nada).
-  const hasClaudeAccount = (): boolean =>
-    keyManager.getAllMeta().some((a) => a.provider === CHAT_PROVIDER);
 
   const activeChatAccountLabel = (): string => {
     // Herramienta NVIDIA/OpenRouter: la etiqueta es el modelo activo (la
@@ -1345,10 +910,6 @@ export function activate(context: vscode.ExtensionContext) {
       const pref = getPreferredId();
       const meta = api.find((a) => a.id === pref) ?? [...api].sort((x, y) => x.label.localeCompare(y.label))[0];
       return openAIModel(meta) || meta.label;
-    }
-    if (hasClaudeAccount()) {
-      if (getChatMode() === 'full') return 'Claude (tu login)';
-      return sortedActiveAnthropic()[0]?.label ?? 'Claude — sin cuenta activa';
     }
     return 'Sin modelos — pega tu código de NVIDIA Build';
   };
@@ -1455,25 +1016,12 @@ export function activate(context: vscode.ExtensionContext) {
       await addAccountFromText(text);
     }),
 
-    vscode.commands.registerCommand('keyRotator.moveAccountUp', async (node?: { account?: AccountMeta }) => {
-      await moveAccount(node?.account?.id, -1);
-    }),
 
-    vscode.commands.registerCommand('keyRotator.moveAccountDown', async (node?: { account?: AccountMeta }) => {
-      await moveAccount(node?.account?.id, +1);
-    }),
 
     vscode.commands.registerCommand('keyRotator.testAccount', async (node?: { account?: AccountMeta }) => {
-      // "Probar conexión": exercise whatever the account is hosted on right now.
-      // Web accounts (DeepSeek, …) get a real "Hola" turn in their browser and
-      // pass if the AI replies without an error; API accounts get a key/billing
-      // probe.
-      const all = keyManager.getAllMeta();
-      const targets = node?.account?.id
-        ? all.filter((a) => a.id === node.account!.id)
-        : all.filter(
-            (a) => a.provider === CHAT_PROVIDER || isWebProvider(a.provider) || isOpenAIProvider(a.provider)
-          );
+      // "Probar modelos": análisis de viabilidad real de cada API key.
+      const all = keyManager.getAllMeta().filter((a) => isOpenAIProvider(a.provider));
+      const targets = node?.account?.id ? all.filter((a) => a.id === node.account!.id) : all;
       if (targets.length === 0) {
         vscode.window.showInformationMessage('KeyRotator: no hay cuentas que probar.');
         return;
@@ -1505,13 +1053,6 @@ export function activate(context: vscode.ExtensionContext) {
               void vscode.window.showInformationMessage(`${icon} ${meta.label} — ${report.verdict}: ${summary}`);
               continue;
             }
-            const verdict = isWebProvider(meta.provider) ? await testWebAccount(meta) : await diagnoseAccount(meta.id);
-            await keyManager.updateAccountMeta(meta.id, {
-              status: verdict.ok ? 'active' : 'error',
-              lastError: verdict.ok ? undefined : verdict.detail,
-            });
-            const icon = verdict.ok ? '✅' : '⛔';
-            void vscode.window.showInformationMessage(`${icon} ${meta.label}: ${verdict.detail}`);
           }
           refreshUI();
           ChatPanel.refreshIfOpen();
@@ -1519,188 +1060,13 @@ export function activate(context: vscode.ExtensionContext) {
       );
     }),
 
-    vscode.commands.registerCommand('keyRotator.setChatAccount', async (node?: { account?: AccountMeta }) => {
-      // Clicking an account in the tree makes the chat use its API.
-      let id = node?.account?.id;
-      if (!id) {
-        const accounts = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
-        const picked = await vscode.window.showQuickPick(
-          accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
-          { placeHolder: '¿Qué API usar en el chat?' }
-        );
-        id = picked?.id;
-      }
-      if (!id) return;
-      const acc = keyManager.getAllMeta().find((a) => a.id === id);
-      // Make sure the chosen account is usable (not disabled).
-      if (acc && acc.status === 'disabled') {
-        await keyManager.updateAccountMeta(id, { status: 'active', lastError: undefined });
-      }
-      await setPreferredId(id);
-      refreshUI();
-      ChatPanel.refreshIfOpen();
-      vscode.window.showInformationMessage(`KeyRotator: el chat ahora usa "${acc?.label ?? id}".`);
-    }),
 
-    vscode.commands.registerCommand('keyRotator.loginProfile', async (node?: { account?: AccountMeta }) => {
-      const accounts = keyManager.getAllMeta().filter((a) => a.provider === CHAT_PROVIDER);
-      if (accounts.length === 0) {
-        vscode.window.showInformationMessage('KeyRotator: agrega primero una cuenta de Anthropic.');
-        return;
-      }
-      let picked: { label: string; id: string } | undefined = node?.account
-        ? { label: node.account.label, id: node.account.id }
-        : undefined;
-      if (!picked) {
-        picked = await vscode.window.showQuickPick(
-          accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
-          { placeHolder: 'Inicia sesión en el perfil de qué cuenta (modo chat "profiles")' }
-        );
-      }
-      if (!picked) return;
 
-      // Optional: pre-fill the email on the OAuth page so the browser opens
-      // straight to the right Google/Anthropic account (helpful for the 2nd+
-      // profile, where the browser may already have another account active).
-      const email = await vscode.window.showInputBox({
-        prompt: `Email de la cuenta de Claude.ai para "${picked.label}" (opcional)`,
-        placeHolder: 'tu-correo@gmail.com — déjalo vacío para elegir en el navegador',
-      });
 
-      // Open a terminal scoped to this account's CLAUDE_CONFIG_DIR and run the
-      // CLI login. `claude auth login` opens the browser automatically; the
-      // OAuth credential is stored only in this dir, so each account keeps
-      // its own login + claude.ai-managed MCPs.
-      const dir = profileDir(picked.id);
-      const terminal = vscode.window.createTerminal({
-        name: `KeyRotator login: ${picked.label}`,
-        env: { CLAUDE_CONFIG_DIR: dir },
-      });
-      terminal.show();
-      const cmd = email?.trim() ? `claude auth login --claudeai --email "${email.trim()}"` : 'claude auth login --claudeai';
-      terminal.sendText(cmd);
-      vscode.window.showInformationMessage(
-        `"${picked.label}": se abrirá tu navegador para iniciar sesión. Cuando termines ahí, vuelve a esta terminal — puede pedirte pegar un código.`
-      );
-    }),
 
-    vscode.commands.registerCommand('keyRotator.addAccount', () => {
-      DashboardPanel.createOrShow(context.extensionUri, dashboardCallbacks);
-    }),
 
-    // "Add Account (Login)": one click = pick a provider, create the account,
-    // and open the browser to log in — no API key needed. Claude uses the CLI
-    // OAuth; web providers (DeepSeek, …) drive their web chat in a browser.
-    // The list is an array so more web chats can be added once verified.
-    vscode.commands.registerCommand('keyRotator.addLoginAccount', async () => {
-      type LoginProvider = { label: string; description: string; id: string; flow: 'claude' | 'web' };
-      const LOGIN_PROVIDERS: LoginProvider[] = [
-        { label: '$(sparkle) Claude (Claude.ai)', description: 'Usa tu suscripción — abre el navegador para iniciar sesión', id: CHAT_PROVIDER, flow: 'claude' },
-        { label: '$(globe) DeepSeek (web)', description: 'Chat web de DeepSeek (V4) sin API — inicia sesión una vez en el navegador', id: 'deepseek-web', flow: 'web' },
-      ];
-      const picked = await vscode.window.showQuickPick(LOGIN_PROVIDERS, {
-        placeHolder: '¿Qué cuenta quieres agregar?',
-      });
-      if (!picked) return;
 
-      const sameProvider = keyManager.getAllMeta().filter((a) => a.provider === picked.id);
-      const id = randomUUID();
 
-      if (picked.flow === 'web') {
-        const defaultName = `${webProviderKey(picked.id).replace(/^\w/, (c) => c.toUpperCase())} (cuenta ${sameProvider.length + 1})`;
-        await keyManager.addAccount({
-          id,
-          provider: picked.id,
-          label: defaultName,
-          apiKey: '',
-          envVar: '',
-          priority: sameProvider.length + 1,
-          switchMode: 'confirm',
-          status: 'active',
-        });
-        refreshUI();
-        ChatPanel.refreshIfOpen();
-        await startWebLogin(id, picked.id, defaultName);
-        return;
-      }
-
-      await keyManager.addAccount({
-        id,
-        provider: picked.id,
-        label: `Claude (cuenta ${sameProvider.length + 1})`,
-        apiKey: '',
-        envVar: 'ANTHROPIC_API_KEY',
-        priority: sameProvider.length + 1,
-        switchMode: 'confirm',
-        status: 'active',
-      });
-
-      // Login-only accounts only work in 'profiles' mode (isolated CLAUDE_CONFIG_DIR).
-      if (getChatMode() !== 'profiles') {
-        await vscode.workspace
-          .getConfiguration('keyRotator')
-          .update('chatMode', 'profiles', vscode.ConfigurationTarget.Global);
-      }
-
-      // Open a terminal scoped to this new account's CLAUDE_CONFIG_DIR. `claude
-      // auth login --claudeai` opens the browser automatically; once the user
-      // finishes there, the account is ready to use in chat.
-      const dir = profileDir(id);
-      const terminal = vscode.window.createTerminal({
-        name: `KeyRotator login: ${sameProvider.length + 1}`,
-        env: { CLAUDE_CONFIG_DIR: dir },
-      });
-      terminal.show();
-      terminal.sendText('claude auth login --claudeai');
-      vscode.window.showInformationMessage(
-        'KeyRotator: cuenta creada — se abrirá tu navegador para iniciar sesión. Cuando termines ahí, vuelve a esta terminal.'
-      );
-      refreshUI();
-      ChatPanel.refreshIfOpen();
-    }),
-
-    // Open the web-login browser for a web account (DeepSeek, …): a real,
-    // headed Chromium window where the user signs in once; the session is
-    // saved in the account's persistent profile.
-    vscode.commands.registerCommand('keyRotator.webChatLogin', async (node?: { account?: AccountMeta }) => {
-      let meta = node?.account;
-      if (!meta || !isWebProvider(meta.provider)) {
-        const webAccts = keyManager.getAllMeta().filter((a) => isWebProvider(a.provider));
-        if (webAccts.length === 0) {
-          vscode.window.showInformationMessage('KeyRotator: agrega primero una cuenta web (DeepSeek) con "Add Account (Login)".');
-          return;
-        }
-        const picked = await vscode.window.showQuickPick(
-          webAccts.map((a) => ({ label: a.label, description: a.provider, id: a.id, provider: a.provider })),
-          { placeHolder: '¿En qué cuenta web quieres iniciar sesión?' }
-        );
-        if (!picked) return;
-        meta = webAccts.find((a) => a.id === picked.id);
-      }
-      if (!meta) return;
-      await startWebLogin(meta.id, meta.provider, meta.label);
-    }),
-
-    vscode.commands.registerCommand('keyRotator.activateAccount', async (node?: { account?: AccountMeta }) => {
-      const id = node?.account?.id;
-      if (!id) return;
-      await keyManager.updateAccountMeta(id, { status: 'active', lastError: undefined });
-      refreshUI();
-    }),
-
-    vscode.commands.registerCommand('keyRotator.disableAccount', async (node?: { account?: AccountMeta }) => {
-      const id = node?.account?.id;
-      if (!id) return;
-      await keyManager.updateAccountMeta(id, { status: 'disabled' });
-      refreshUI();
-    }),
-
-    vscode.commands.registerCommand('keyRotator.deleteAccount', async (node?: { account?: AccountMeta }) => {
-      const id = node?.account?.id;
-      if (!id) return;
-      await keyManager.deleteAccount(id);
-      refreshUI();
-    }),
 
     vscode.commands.registerCommand('keyRotator.editAccount', async (node?: { account?: AccountMeta }) => {
       let meta = node?.account;
@@ -1730,28 +1096,7 @@ export function activate(context: vscode.ExtensionContext) {
       DashboardPanel.refreshIfOpen();
     }),
 
-    vscode.commands.registerCommand('keyRotator.reportRateLimit', async () => {
-      const accounts = keyManager.getAllMeta().filter((a) => a.status === 'active');
-      if (accounts.length === 0) {
-        vscode.window.showInformationMessage('KeyRotator: no hay cuentas activas.');
-        return;
-      }
-      const picked = await vscode.window.showQuickPick(
-        accounts.map((a) => ({ label: a.label, description: a.provider, id: a.id })),
-        { placeHolder: '¿Qué cuenta llegó al límite?' }
-      );
-      if (picked) {
-        await handleRateLimit(picked.id);
-      }
-    }),
 
-    vscode.commands.registerCommand('keyRotator.rotateNow', async () => {
-      const providers = Array.from(new Set(keyManager.getAllMeta().map((a) => a.provider)));
-      const picked = await vscode.window.showQuickPick(providers, { placeHolder: 'Rotar cuenta de qué proveedor?' });
-      if (picked) {
-        await rotateProvider(picked, 'manual');
-      }
-    })
   );
 
   // --- health check loop --------------------------------------------------
@@ -1789,24 +1134,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(healthCheckDisposable);
 
-  // Tear down any web-chat browser daemons when the extension unloads.
-  context.subscriptions.push(
-    new vscode.Disposable(() => {
-      for (const r of webRunners.values()) r.dispose();
-      webRunners.clear();
-    })
-  );
-
-  // Changing the web browser preference rebuilds runners with the new browser.
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('keyRotator.webChatBrowser') || e.affectsConfiguration('keyRotator.webChatUseRealProfile')) {
-        for (const r of webRunners.values()) r.dispose();
-        webRunners.clear();
-      }
-    })
-  );
-
   // --- registry refresh ---------------------------------------------------
 
   void registry.refreshFromRemote();
@@ -1816,7 +1143,6 @@ export function activate(context: vscode.ExtensionContext) {
   // Warm the scan cache in the background shortly after startup so any
   // sessions changed while VS Code was closed get re-scanned and persisted.
   setTimeout(() => {
-    listNamedSessions();
     persistScanCache();
     sessionsProvider.refresh();
   }, 1500);

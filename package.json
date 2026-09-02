@@ -1,8 +1,8 @@
 {
   "name": "key-rotator",
   "displayName": "KeyRotator",
-  "description": "Turn your NVIDIA Build / OpenRouter API keys into an AI agent inside VS Code: files, commands, web, images and a multi-model agency — with approval on every step.",
-  "version": "0.3.0",
+  "description": "Convierte tus API keys de NVIDIA Build / OpenRouter en un agente de IA dentro de VS Code: archivos, comandos, web, imágenes, documentos y voz — con tu aprobación en cada paso.",
+  "version": "0.4.0",
   "publisher": "niko-local",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -49,100 +49,43 @@
     },
     "commands": [
       {
-        "command": "keyRotator.addAccount",
-        "title": "KeyRotator: Add Account",
-        "icon": "$(add)"
-      },
-      {
-        "command": "keyRotator.addLoginAccount",
-        "title": "KeyRotator: Add Account (Login)",
-        "icon": "$(sign-in)"
-      },
-      {
         "command": "keyRotator.editAccount",
-        "title": "KeyRotator: Edit Account",
+        "title": "KeyRotator: Renombrar modelo",
         "icon": "$(edit)"
       },
       {
-        "command": "keyRotator.deleteAccount",
-        "title": "KeyRotator: Delete Account",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "keyRotator.activateAccount",
-        "title": "KeyRotator: Activate Account",
-        "icon": "$(check)"
-      },
-      {
-        "command": "keyRotator.disableAccount",
-        "title": "KeyRotator: Disable Account",
-        "icon": "$(circle-slash)"
-      },
-      {
         "command": "keyRotator.openDashboard",
-        "title": "KeyRotator: Open Dashboard",
+        "title": "KeyRotator: Abrir panel",
         "icon": "$(dashboard)"
       },
       {
         "command": "keyRotator.openChat",
-        "title": "KeyRotator: Open Chat",
+        "title": "KeyRotator: Abrir chat",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "keyRotator.openChatSession",
-        "title": "KeyRotator: Open Chat Session"
+        "title": "KeyRotator: Abrir conversación"
       },
       {
         "command": "keyRotator.newChatSession",
-        "title": "KeyRotator: New Chat Session",
+        "title": "KeyRotator: Nueva conversación",
         "icon": "$(add)"
       },
       {
         "command": "keyRotator.deleteChat",
-        "title": "KeyRotator: Borrar chat",
+        "title": "KeyRotator: Borrar conversación",
         "icon": "$(trash)"
       },
       {
         "command": "keyRotator.pasteSnippet",
-        "title": "KeyRotator: Pegar código (NVIDIA Build / OpenRouter)",
+        "title": "KeyRotator: Agregar modelo (pegar código)",
         "icon": "$(clippy)"
       },
       {
-        "command": "keyRotator.loginProfile",
-        "title": "KeyRotator: Log in Account (Chat)",
-        "icon": "$(sign-in)"
-      },
-      {
-        "command": "keyRotator.webChatLogin",
-        "title": "KeyRotator: Iniciar sesión (cuenta web)",
-        "icon": "$(globe)"
-      },
-      {
-        "command": "keyRotator.setChatAccount",
-        "title": "KeyRotator: Use this Account in Chat"
-      },
-      {
-        "command": "keyRotator.moveAccountUp",
-        "title": "KeyRotator: Subir prioridad",
-        "icon": "$(arrow-up)"
-      },
-      {
-        "command": "keyRotator.moveAccountDown",
-        "title": "KeyRotator: Bajar prioridad",
-        "icon": "$(arrow-down)"
-      },
-      {
         "command": "keyRotator.testAccount",
-        "title": "KeyRotator: Probar conexión",
+        "title": "KeyRotator: Probar modelos",
         "icon": "$(sync)"
-      },
-      {
-        "command": "keyRotator.reportRateLimit",
-        "title": "KeyRotator: Report Rate Limit on Active Account"
-      },
-      {
-        "command": "keyRotator.rotateNow",
-        "title": "KeyRotator: Rotate Now"
       }
     ],
     "menus": {
@@ -194,79 +137,10 @@
           "default": true,
           "description": "When the highest-priority account recovers from a rate limit, automatically rotate back to it."
         },
-        "keyRotator.chatModel": {
-          "type": "string",
-          "default": "",
-          "description": "Modelo para el KeyRotator Chat (alias 'opus'/'sonnet'/'haiku' o id completo como 'claude-opus-4-8'). Vacío = default del CLI. También se puede cambiar desde el selector del chat."
-        },
-        "keyRotator.chatEffort": {
-          "type": "string",
-          "enum": [
-            "",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
-          "default": "",
-          "description": "Nivel de esfuerzo/razonamiento para el chat (--effort). Vacío = default del modelo. 'xhigh'/'max' = máxima calidad. También se cambia desde el selector del chat."
-        },
-        "keyRotator.chatMode": {
-          "type": "string",
-          "enum": [
-            "failover",
-            "full",
-            "profiles"
-          ],
-          "enumDescriptions": [
-            "Failover (requiere saldo de API): API keys de tus cuentas + rotación al agotarse. Comparte las sesiones con Claude Code nativo (mismo almacén local), así puedes continuar aquí un chat de allá y viceversa.",
-            "Full (recomendado con una sola cuenta de Claude.ai): tu login por defecto de Claude, usa el saldo de tu suscripción. Integraciones de claude.ai, sin rotación. También comparte sesiones con el Claude Code nativo.",
-            "Profiles: login aislado por cuenta (integraciones claude.ai + rotación). Útil solo si tienes 2+ cuentas de Claude.ai distintas. OJO: usa un almacén de sesiones separado, así que NO comparte sesiones con el Claude Code nativo."
-          ],
-          "default": "full",
-          "description": "Cómo autentica el KeyRotator Chat. 'failover' = API key + rotación (comparte sesiones con el Claude Code nativo). 'full' = login único. 'profiles' = login por cuenta aislado (no comparte sesiones)."
-        },
         "keyRotator.chatMcpConfig": {
           "type": "string",
           "default": "",
-          "description": "Opcional: ruta a un archivo JSON de configuración MCP (formato {\"mcpServers\":{...}}). Se pasa con --mcp-config para cargar tus servidores MCP propios en el chat, incluso en modo API (failover). Nota: las integraciones gestionadas de claude.ai (Canva, Drive, Gmail) requieren modo 'full'."
-        },
-        "keyRotator.chatExtraArgs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "description": "Opcional: argumentos extra para el CLI claude del chat (ej: [\"--plugin-dir\", \"C:/ruta/plugin\", \"--add-dir\", \"C:/proyecto\"]). Útil para cargar skills/plugins/agents propios en modo API."
-        },
-        "keyRotator.webChatBrowser": {
-          "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "opera-gx",
-            "opera",
-            "msedge",
-            "brave",
-            "vivaldi",
-            "chrome"
-          ],
-          "enumDescriptions": [
-            "Auto: usa tu navegador por defecto si es Chromium (Opera/Edge/Brave/Vivaldi/Chrome); Chrome es la última opción y el Chromium de Playwright el último recurso.",
-            "Opera GX",
-            "Opera",
-            "Microsoft Edge",
-            "Brave",
-            "Vivaldi",
-            "Google Chrome"
-          ],
-          "description": "Qué navegador usa el chat web (DeepSeek, …). 'auto' respeta tu navegador por defecto. También acepta una ruta absoluta a un .exe de un navegador Chromium. Debe ser un navegador basado en Chromium (Firefox no es compatible con esta automatización)."
-        },
-        "keyRotator.openRouterModel": {
-          "type": "string",
-          "default": "",
-          "description": "Opcional: modelo fijo para cuentas OpenRouter en el chat/agente (formato 'proveedor/modelo'; los ':free' no cuestan). Vacío = sin default; eliges desde el selector del chat, que carga la lista real desde la API de tu cuenta."
+          "description": "Opcional: ruta a un JSON de MCP ({\"mcpServers\":{...}}) que se suma a los servidores que el agente puede usar. Cada llamada MCP sigue pidiendo tu aprobación."
         },
         "keyRotator.agencyDirector": {
           "type": "string",
@@ -277,11 +151,6 @@
           "type": "boolean",
           "default": true,
           "description": "Permitir que el agente use tus servidores MCP (los mismos de Claude Code: ~/.claude.json → mcpServers, más keyRotator.chatMcpConfig). Cada llamada MCP pide aprobación. Nota: las integraciones gestionadas de claude.ai (Canva/Gmail/Drive) son OAuth y no se pueden vincular por aquí."
-        },
-        "keyRotator.webChatUseRealProfile": {
-          "type": "boolean",
-          "default": false,
-          "description": "Usar tu PERFIL real del navegador (donde ya tienes sesión de Google) para el chat web, en vez de un perfil aislado. Ventaja: inicias sesión con Google de un clic. Requisito: debes CERRAR ese navegador por completo (incluido el icono de la bandeja) mientras KeyRotator lo usa — dos procesos no pueden compartir el mismo perfil. Si está apagado, KeyRotator usa un perfil aislado y no toca tu navegación."
         }
       }
     }
@@ -290,7 +159,7 @@
     "compile": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "tsc --noEmit && node esbuild.js --production && node scripts/stub-sharp.mjs && npx @vscode/vsce package --no-yarn",
-    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/streamParser.test.ts test/sessionStore.test.ts test/agent.test.ts test/snippetParser.test.ts test/mcp.test.ts test/aiTools.test.ts test/agency.test.ts test/status.test.ts test/viability.test.ts test/imageRunner.test.ts test/mediaAttachments.test.ts test/uiContract.test.ts test/docText.test.ts"
+    "test": "node --import tsx --test test/keyDetector.test.ts test/rotationEngine.test.ts test/statsTracker.test.ts test/agent.test.ts test/snippetParser.test.ts test/mcp.test.ts test/aiTools.test.ts test/agency.test.ts test/status.test.ts test/viability.test.ts test/imageRunner.test.ts test/mediaAttachments.test.ts test/uiContract.test.ts test/docText.test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -301,7 +170,6 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
-    "@xenova/transformers": "^2.17.2",
-    "playwright-core": "^1.49.1"
+    "@xenova/transformers": "^2.17.2"
   }
 }

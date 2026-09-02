@@ -57,33 +57,19 @@
         <div id="attachBar" class="attach-bar hidden"></div>
         <footer class="composer">
           <div class="attach-control">
-            <button id="plusBtn" class="icon-btn plus-btn" title="Adjuntar o agregar funciones" aria-label="Adjuntar o agregar funciones">＋</button>
-            <div id="plusMenu" class="menu up hidden" role="menu">
-              <button class="menu-item" data-act="attachFile">Adjuntar archivo</button>
-              <button class="menu-item" data-act="attachImage">Adjuntar imagen</button>
-            </div>
+            <button id="plusBtn" class="icon-btn plus-btn"
+              title="Adjuntar archivo, imagen, PDF, audio o vídeo"
+              aria-label="Adjuntar archivo">＋</button>
           </div>
           <textarea id="input" aria-label="Mensaje" placeholder="Escribe un mensaje o usa / para comandos" rows="1"></textarea>
           <button id="sendBtn" class="send-btn" title="Enviar" aria-label="Enviar mensaje">↑</button>
         </footer>
 
         <div class="bottom-bar">
-          <span id="claudeControls" class="ctl-group">
+          <span id="modelControls" class="ctl-group">
             <label class="ctl">
               <span>Modelo</span>
-              <select id="modelSelect"><option value="">Detectando…</option></select>
-            </label>
-            <span class="rail-divider" aria-hidden="true"></span>
-            <label class="ctl">
-              <span>Esfuerzo</span>
-              <select id="effortSelect">
-                <option value="">Default</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
-              </select>
+              <select id="modelSelect"><option value="">Sin modelos</option></select>
             </label>
           </span>
 
@@ -95,18 +81,7 @@
           </span>
 
           <button id="researchBtn" class="toggle-btn" title="Buscar y contrastar fuentes antes de responder">Investigación</button>
-
-          <span id="webControls" class="ctl-group hidden">
-            <label class="ctl">
-              <span>Modelo</span>
-              <select id="webModelSelect"></select>
-            </label>
-            <span id="webToggles" class="toggles"></span>
-          </span>
-
           <span class="spacer"></span>
-          <span id="usageBadge" class="model-badge hidden" title="Cuándo se reinicia tu límite de uso"></span>
-          <span id="activeModel" class="model-badge" title="Modelo activo">Sin modelo</span>
         </div>
       </div>
     </div>

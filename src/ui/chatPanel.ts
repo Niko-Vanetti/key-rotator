@@ -146,15 +146,9 @@ export class ChatPanel {
     return this.activeAccountLabel();
   }
 
-  /**
-   * Name for assistant bubbles: the account's model (z-ai/glm-5.2) or web
-   * provider. Falls back to the GLOBALLY selected account when this panel has
-   * no per-panel pin ('' → backend resolves the preferred one), and only says
-   * 'Claude' when the active account really is Claude.
-   */
+  /** Name for assistant bubbles: the active model (each API key IS a model). */
   private currentAssistantName(): string {
-    const name = this.backend.getWebProviderName?.(this.accountId ?? '');
-    return name || 'Claude';
+    return this.backend.getApiChatModel?.(this.accountId ?? '') || this.currentAccountLabel();
   }
 
   private metaMsg(sessionId: string | null, activeAccount?: string): Record<string, unknown> {
@@ -170,35 +164,6 @@ export class ChatPanel {
     const accounts = this.backend.listChatAccounts();
     if (!this.accountId) return accounts;
     return accounts.map((a) => ({ ...a, active: a.id === this.accountId }));
-  }
-
-  /**
-   * Web accounts (DeepSeek, …) expose in-chat models + feature toggles instead
-   * of the Claude model/effort controls. Post them so the webview swaps the
-   * bottom-bar controls; for non-web accounts, tell it to show the Claude ones.
-   */
-  private postWebControls(): void {
-    const caps = this.backend.getWebCapsFor?.(this.accountId ?? '') ?? null;
-    if (!caps) {
-      this.post({ type: 'webControls', web: false });
-      return;
-    }
-    const model = caps.models[0]?.id ?? null;
-    this.session.setWebModel(model);
-    const onToggles: Record<string, boolean> = {};
-    for (const t of caps.toggles) {
-      const on = t.on === true;
-      onToggles[t.id] = on;
-      this.session.setWebToggle(t.id, on);
-    }
-    this.post({
-      type: 'webControls',
-      web: true,
-      models: caps.models,
-      toggles: caps.toggles,
-      selectedModel: model,
-      onToggles,
-    });
   }
 
   /**
@@ -230,34 +195,21 @@ export class ChatPanel {
     }
   }
 
-  /** Push models: cached list instantly, then network-refreshed in background. */
+  /** Cada API key ES un modelo: el dropdown los lista y elegir uno cambia de cuenta. */
   private postModels(): void {
-    // Cada API key ES un modelo: el dropdown "Modelo" lista TODOS los modelos
-    // (uno por cuenta) y elegir uno cambia a esa cuenta (value = accountId).
     const apiModels = this.backend.listApiAccountModels?.() ?? [];
-    const activeIsApi = this.backend.getApiChatModel?.(this.accountId ?? '') !== null && this.backend.getApiChatModel;
-    if (apiModels.length > 0 && (activeIsApi || !this.accountId)) {
-      this.session.setModel(null);
-      const models = apiModels.map((m) => ({ id: m.accountId, label: m.model }));
-      const selected = this.accountId && apiModels.some((m) => m.accountId === this.accountId)
-        ? this.accountId
-        : models[0].id;
-      this.post({ type: 'models', models, selected, asAccounts: true });
-      const selModel = apiModels.find((m) => m.accountId === selected)?.model ?? '';
-      this.post({ type: 'model', model: selModel });
+    if (apiModels.length === 0) {
+      this.post({ type: 'models', models: [], selected: '' });
+      this.post({ type: 'model', model: '' });
       return;
     }
-    const apply = async (models: { id: string; label: string }[]) => {
-      const cfg = vscode.workspace.getConfiguration('keyRotator');
-      let selected = cfg.get<string>('chatModel', '').trim();
-      if (!selected || !models.some((m) => m.id === selected)) {
-        selected = models[0]?.id ?? '';
-      }
-      this.session.setModel(selected || null);
-      this.post({ type: 'models', models, selected });
-    };
-    void apply(this.backend.getCachedModels(this.accountId));
-    void this.backend.listModels(this.accountId).then((models) => apply(models));
+    const models = apiModels.map((m) => ({ id: m.accountId, label: m.model }));
+    const selected =
+      this.accountId && apiModels.some((m) => m.accountId === this.accountId)
+        ? this.accountId
+        : models[0].id;
+    this.post({ type: 'models', models, selected, asAccounts: true });
+    this.post({ type: 'model', model: apiModels.find((m) => m.accountId === selected)?.model ?? '' });
   }
 
   private async loadSession(id: string): Promise<void> {
@@ -268,8 +220,8 @@ export class ChatPanel {
     this.post({ type: 'loading', title: name });
     this.post({ type: 'title', title: name });
     const loaded = await this.backend.loadHistory(id);
-    this.session.setActiveSession(id, loaded?.cwd ?? null);
-    const messages = (loaded?.messages ?? []).map((m) => ({
+    this.session.setActiveSession(id);
+    const messages = (loaded ?? []).map((m) => ({
       ...m,
       attachments: m.attachments?.map((a) => this.attachmentForWeb(a)),
     }));
@@ -289,16 +241,11 @@ export class ChatPanel {
   private async handleMessage(msg: IncomingMessage): Promise<void> {
     switch (msg.type) {
       case 'ready': {
-        const cfg = vscode.workspace.getConfiguration('keyRotator');
-        const effort = cfg.get<string>('chatEffort', '').trim();
-        this.session.setEffort(effort || null);
         this.post(this.metaMsg(this.session.currentSessionId));
-        this.post({ type: 'config', effort });
         this.post({ type: 'accounts', accounts: this.accountsForMenu() });
         this.post({ type: 'mode', mode: this.session.currentMode });
         this.post({ type: 'slash', commands: this.backend.getSlashCommands() });
         this.postModels();
-        this.postWebControls();
         if (this.pendingSessionId) {
           const id = this.pendingSessionId;
           this.pendingSessionId = null;
@@ -308,28 +255,15 @@ export class ChatPanel {
       }
 
       case 'setModel': {
+        // Cada modelo ES una cuenta: elegirlo cambia la API key en uso.
         const v = (msg.value ?? '').trim();
-        // Agent providers: each model IS an account. If the picked value is an
-        // API account id, switch to that account (= that model).
-        const apiModels = this.backend.listApiAccountModels?.() ?? [];
-        const picked = apiModels.find((m) => m.accountId === v);
-        if (picked) {
-          this.accountId = v;
-          this.session.setAccount(v);
-          this.post(this.metaMsg(this.session.currentSessionId));
-          this.post({ type: 'accounts', accounts: this.accountsForMenu() });
-          this.post({ type: 'model', model: picked.model });
-          break;
-        }
-        this.session.setModel(v || null);
-        await vscode.workspace.getConfiguration('keyRotator').update('chatModel', v, vscode.ConfigurationTarget.Global);
-        break;
-      }
-
-      case 'setEffort': {
-        const v = (msg.value ?? '').trim();
-        this.session.setEffort(v || null);
-        await vscode.workspace.getConfiguration('keyRotator').update('chatEffort', v, vscode.ConfigurationTarget.Global);
+        const picked = (this.backend.listApiAccountModels?.() ?? []).find((m) => m.accountId === v);
+        if (!picked) break;
+        this.accountId = v;
+        this.session.setAccount(v);
+        this.post(this.metaMsg(this.session.currentSessionId));
+        this.post({ type: 'accounts', accounts: this.accountsForMenu() });
+        this.post({ type: 'model', model: picked.model });
         break;
       }
 
@@ -349,17 +283,7 @@ export class ChatPanel {
           this.post(this.metaMsg(this.session.currentSessionId));
           this.post({ type: 'accounts', accounts: this.accountsForMenu() });
           this.postModels();
-          this.postWebControls();
         }
-        break;
-      case 'setWebModel': {
-        const v = (msg.value ?? '').trim();
-        this.session.setWebModel(v || null);
-        this.post({ type: 'model', model: v });
-        break;
-      }
-      case 'setWebToggle':
-        if (msg.id) this.session.setWebToggle(msg.id, !!msg.on);
         break;
       case 'stop':
         this.session.stop();
@@ -410,26 +334,14 @@ export class ChatPanel {
         await vscode.commands.executeCommand('keyRotator.openDashboard');
         break;
 
-      // ----- attach a file / image (the "+" menu) -----
-      case 'attachFile':
-      case 'attachImage': {
-        const isImage = msg.type === 'attachImage';
-        const picked = await vscode.window.showOpenDialog({
-          canSelectMany: true,
-          openLabel: 'Adjuntar',
-          filters: isImage ? { Imágenes: ['png', 'jpg', 'jpeg', 'webp', 'gif'] } : undefined,
-        });
+      // ----- adjuntar (botón "+") -----
+      // UN solo camino: el tipo se deduce del archivo (imagen → visión,
+      // documento/audio/vídeo → texto extraído o transcrito). Filtrar por
+      // extensión solo escondía formatos que sí funcionan.
+      case 'attachFile': {
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Adjuntar' });
         if (!picked || picked.length === 0) break;
-        const isWeb = this.backend.getWebCapsFor?.(this.accountId ?? '') != null;
-        const isAgent = this.backend.getApiChatModel?.(this.accountId ?? '') != null;
-        if (isWeb || isAgent) {
-          // Web chat uploads the file; the agent gets it as an attachment
-          // (images travel as vision parts, other files as paths to read).
-          for (const u of picked) this.queueAttachment(u.fsPath, 'picker', false);
-        } else {
-          // Claude CLI: reference the path with @ so it reads the file.
-          this.post({ type: 'insert', text: picked.map((u) => `@${u.fsPath} `).join('') });
-        }
+        for (const u of picked) this.queueAttachment(u.fsPath, 'picker', false);
         break;
       }
       // ----- imagen pegada (Ctrl+V) o arrastrada sin ruta -----
@@ -518,7 +430,6 @@ export class ChatPanel {
             onInfo: (t) => this.post({ type: 'info', text: t }),
             onStatus: (t) => this.post({ type: 'status', text: t }),
             onModel: (m) => this.post({ type: 'model', model: m }),
-            onUsage: (info) => this.post({ type: 'usage', info }),
             onError: (t) => this.post({ type: 'turnError', text: t }),
             onDone: (full) => this.post({ type: 'done', text: full, sessionId: this.session.currentSessionId }),
           },

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { SessionSummary } from '../chat/sessionStore.js';
+import type { SessionSummary } from '../chat/chatSession.js';
 
 type Node = { kind: 'new' } | { kind: 'session'; session: SessionSummary };
 

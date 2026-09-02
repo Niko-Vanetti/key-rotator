@@ -6,19 +6,13 @@
   const inputEl = $('input');
   const sendBtn = $('sendBtn');
   const activeAccountEl = $('activeAccount');
-  const activeModelEl = $('activeModel');
   const chatTitleEl = $('chatTitle');
   const modelSelect = $('modelSelect');
-  const effortSelect = $('effortSelect');
-  const claudeControls = $('claudeControls');
-  const webControls = $('webControls');
-  const webModelSelect = $('webModelSelect');
-  const webToggles = $('webToggles');
+  const modelControls = $('modelControls');
   const acctBtn = $('acctBtn');
   const acctMenu = $('acctMenu');
   const acctList = $('acctList');
   const plusBtn = $('plusBtn');
-  const plusMenu = $('plusMenu');
   const slashMenu = $('slashMenu');
   const mediaViewer = $('mediaViewer');
   const viewerImage = $('viewerImage');
@@ -180,13 +174,13 @@
   function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px'; }
 
   // ---------- menus ----------
-  function closeMenus() { acctMenu.classList.add('hidden'); plusMenu.classList.add('hidden'); }
+  function closeMenus() { acctMenu.classList.add('hidden'); }
   document.addEventListener('click', (e) => {
     if (!acctMenu.contains(e.target) && e.target !== acctBtn) acctMenu.classList.add('hidden');
-    if (!plusMenu.contains(e.target) && e.target !== plusBtn) plusMenu.classList.add('hidden');
   });
-  acctBtn.addEventListener('click', (e) => { e.stopPropagation(); plusMenu.classList.add('hidden'); acctMenu.classList.toggle('hidden'); });
-  plusBtn.addEventListener('click', (e) => { e.stopPropagation(); acctMenu.classList.add('hidden'); plusMenu.classList.toggle('hidden'); });
+  acctBtn.addEventListener('click', (e) => { e.stopPropagation(); acctMenu.classList.toggle('hidden'); });
+  // Un solo destino: el tipo de archivo se deduce solo, sin menú intermedio.
+  plusBtn.addEventListener('click', (e) => { e.stopPropagation(); closeMenus(); vscode.postMessage({ type: 'attachFile' }); });
   acctMenu.addEventListener('click', (e) => {
     const item = e.target.closest ? e.target.closest('[data-act],[data-mode]') : null;
     if (!item) return;
@@ -206,10 +200,6 @@
     const act = item.getAttribute('data-act');
     if (act) { vscode.postMessage({ type: act }); closeMenus(); }
   });
-  plusMenu.addEventListener('click', (e) => {
-    const act = e.target.getAttribute && e.target.getAttribute('data-act');
-    if (act) { vscode.postMessage({ type: act }); closeMenus(); }
-  });
   function renderAccounts(accounts) {
     if (!acctList) return;
     acctList.innerHTML = '';
@@ -227,11 +217,11 @@
   function applyMode(mode) {
     const agency = mode === 'agency';
     const images = mode === 'images';
-    const ctl = document.getElementById('claudeControls');
+    const ctl = modelControls;
     // En agencia manda el director; en imágenes hay su propio selector.
     if (ctl) ctl.classList.toggle('locked', agency);
     if (ctl) ctl.classList.toggle('hidden', images);
-    [modelSelect, effortSelect].forEach((el) => {
+    [modelSelect].forEach((el) => {
       if (!el) return;
       el.disabled = agency;
       el.title = agency ? 'En modo agencia lo decide el director (elígelo en Administrar modelos)' : '';
@@ -602,56 +592,10 @@
     const imgSel = $('imageModelSelect');
     if (imgSel) imgSel.addEventListener('change', () => vscode.postMessage({ type: 'setImageModel', value: imgSel.value }));
   }
-  effortSelect.addEventListener('change', () => vscode.postMessage({ type: 'setEffort', value: effortSelect.value }));
-  webModelSelect.addEventListener('change', () => {
-    const opt = webModelSelect.options[webModelSelect.selectedIndex];
-    if (opt) activeModelEl.textContent = opt.textContent;
-    vscode.postMessage({ type: 'setWebModel', value: webModelSelect.value });
-  });
-
-  function renderWebControls(msg) {
-    if (!msg.web) {
-      webControls.classList.add('hidden');
-      claudeControls.classList.remove('hidden');
-      return;
-    }
-    // Web account (DeepSeek, …): swap in its in-chat models + feature toggles.
-    claudeControls.classList.add('hidden');
-    webControls.classList.remove('hidden');
-    webModelSelect.innerHTML = '';
-    (msg.models || []).forEach((m) => {
-      const o = document.createElement('option');
-      o.value = m.id; o.textContent = m.label;
-      webModelSelect.appendChild(o);
-    });
-    if (msg.selectedModel) webModelSelect.value = msg.selectedModel;
-    const selOpt = webModelSelect.options[webModelSelect.selectedIndex];
-    if (selOpt) activeModelEl.textContent = selOpt.textContent;
-    webToggles.innerHTML = '';
-    const onMap = msg.onToggles || {};
-    (msg.toggles || []).forEach((t) => {
-      const chip = document.createElement('button');
-      chip.className = 'toggle-chip';
-      chip.textContent = t.label;
-      chip.dataset.id = t.id;
-      const initOn = onMap[t.id] === true;
-      chip.dataset.on = initOn ? '1' : '0';
-      if (initOn) chip.classList.add('on');
-      chip.addEventListener('click', () => {
-        const on = chip.dataset.on === '1' ? false : true;
-        chip.dataset.on = on ? '1' : '0';
-        chip.classList.toggle('on', on);
-        vscode.postMessage({ type: 'setWebToggle', id: t.id, on });
-      });
-      webToggles.appendChild(chip);
-    });
-  }
-
   window.addEventListener('message', (event) => {
     const msg = event.data;
     switch (msg.type) {
       case 'config':
-        if (typeof msg.effort === 'string') effortSelect.value = msg.effort;
         break;
       case 'models': {
         // Copilot-style: dropdown populated with the models the API key supports.
@@ -664,7 +608,6 @@
         if (msg.selected) modelSelect.value = msg.selected;
         break;
       }
-      case 'webControls': renderWebControls(msg); break;
       case 'webAttach': addAttachChip(msg.attachment); break;
       case 'accounts': renderAccounts(msg.accounts); break;
       case 'mode': applyMode(msg.mode); break;
@@ -684,7 +627,6 @@
       case 'title': chatTitleEl.textContent = msg.title || 'Nueva conversación'; break;
       case 'model':
         if (msg.model) {
-          activeModelEl.textContent = msg.model;
           // En modo agencia el "modelo" es quién habla (rol · modelo): que la
           // burbuja lleve ese nombre y no el del modelo del panel.
           assistantName = msg.model;
@@ -694,20 +636,6 @@
           }
         }
         break;
-      case 'usage': {
-        // Show when the usage limit resets (from claude's rate_limit_event).
-        const usageBadge = document.getElementById('usageBadge');
-        const resetsAt = msg.info && msg.info.resetsAt;
-        if (usageBadge && typeof resetsAt === 'number') {
-          const remMs = resetsAt * 1000 - Date.now();
-          if (remMs > 0) {
-            const h = Math.floor(remMs / 3600000), m = Math.ceil((remMs % 3600000) / 60000);
-            usageBadge.textContent = 'límite resetea en ' + (h > 0 ? h + 'h ' : '') + m + 'm';
-            usageBadge.classList.remove('hidden');
-          }
-        }
-        break;
-      }
       case 'insert': inputEl.value += (msg.text || ''); autoGrow(); inputEl.focus(); break;
       case 'delta': if (streamingEl) { streamingRaw += msg.text; streamingEl.textContent = streamingRaw; scrollToBottom(); } break;
       case 'switch':

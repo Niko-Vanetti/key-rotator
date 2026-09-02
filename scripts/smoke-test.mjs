@@ -3,6 +3,7 @@
 // tsc/esbuild can't catch since they don't type-check against the real
 // vscode module at call time.
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
 import path from 'node:path';
 import Module from 'node:module';
 
@@ -154,28 +155,14 @@ try {
   process.exit(1);
 }
 
-const expectedCommands = [
-  'keyRotator.openDashboard',
-  'keyRotator.openChat',
-  'keyRotator.openChatSession',
-  'keyRotator.newChatSession',
-  'keyRotator.setChatAccount',
-  'keyRotator.moveAccountUp',
-  'keyRotator.moveAccountDown',
-  'keyRotator.testAccount',
-  'keyRotator.loginProfile',
-  'keyRotator.webChatLogin',
-  'keyRotator.addAccount',
-  'keyRotator.addLoginAccount',
-  'keyRotator.activateAccount',
-  'keyRotator.disableAccount',
-  'keyRotator.deleteAccount',
-  'keyRotator.editAccount',
-  'keyRotator.reportRateLimit',
-  'keyRotator.rotateNow',
-];
+// La lista sale de package.json, no hardcodeada: así no se puede volver a dar
+// el caso de comandos declarados que nadie registra (o al revés).
+const declaredCommands = JSON.parse(
+  fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8')
+).contributes.commands.map((c) => c.command);
 
-const missing = expectedCommands.filter((c) => !registeredCommands.includes(c));
+const missing = declaredCommands.filter((c) => !registeredCommands.includes(c));
+const orphans = registeredCommands.filter((c) => !declaredCommands.includes(c));
 
 if (!statusBarCreated) {
   console.error('FAIL: status bar item was not created');
@@ -185,8 +172,12 @@ if (!treeProviderRegistered) {
   console.error('FAIL: tree data provider was not registered');
   process.exit(1);
 }
+if (orphans.length > 0) {
+  console.error('FAIL: comandos registrados pero no declarados en package.json:', orphans);
+  process.exit(1);
+}
 if (missing.length > 0) {
-  console.error('FAIL: missing commands:', missing);
+  console.error('FAIL: comandos declarados que nadie registra:', missing);
   process.exit(1);
 }
 

@@ -3,6 +3,42 @@
 Todas las versiones de KeyRotator y qué cambió en cada una. Las fechas son la
 del release. El formato sigue [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.4.0] — 2026-09-02
+
+Limpieza a fondo de la interfaz: **una sola forma de hacer cada cosa**.
+
+### Corregido
+
+- **5 comandos no hacían nada, en silencio.** Al quitarse la vista "API Keys",
+  `activateAccount`, `disableAccount`, `deleteAccount`, `moveAccountUp` y
+  `moveAccountDown` quedaron sin su nodo de árbol y salían por `if (!id) return`
+  — se ejecutaban desde la paleta sin efecto ni aviso. Eliminados.
+- **La rotación de modelos API no se registraba en el Historial**: solo se
+  guardaban las rotaciones del viejo camino de Claude. Ahora se registra toda.
+- El smoke test comprueba los comandos **contra `package.json` en ambos
+  sentidos**, así no puede repetirse el caso de comandos huérfanos.
+
+### Eliminado
+
+- **Chat por Claude CLI** (modos `full`/`profiles`/`failover`) y **chat web de
+  DeepSeek** (Playwright). El producto es el agente NVIDIA Build / OpenRouter;
+  esas superficies causaban la mitad de la redundancia. Con ellas se van
+  `playwright-core` y los módulos `streamParser` y `sessionStore`.
+- **Comandos: 20 → 8.** `addAccount` era un duplicado exacto de `openDashboard`.
+- **Ajustes: 13 → 6.** Fuera `chatModel`, `chatEffort`, `chatMode`,
+  `chatExtraArgs`, `webChatBrowser`, `webChatUseRealProfile` y `openRouterModel`
+  (este competía con el modelo del snippet como segunda fuente de verdad).
+- **Selector "Esfuerzo"**: solo afectaba a Claude CLI; con un modelo de NVIDIA u
+  OpenRouter no hacía nada.
+- **Badge de modelo duplicado**: repetía el texto del propio selector "Modelo".
+- **"Adjuntar imagen"**: compartía handler con "Adjuntar archivo" y solo añadía
+  un filtro que escondía PDF, audio y vídeo (que ya funcionan). Ahora el botón
+  **+** adjunta directo y el tipo se deduce del archivo.
+
+### Notas
+
+- El paquete baja de 6,4 MB a **4,3 MB** (141 archivos, antes 479).
+
 ## [0.3.0] — 2026-08-28
 
 ### Agregado

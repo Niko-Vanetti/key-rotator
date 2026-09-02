@@ -6,7 +6,6 @@ scripts/**
 docs/**
 out/**
 node_modules/**
-!node_modules/playwright-core/**
 
 # --- Whisper local (transcripción de audio/vídeo) ---
 # Inclusiones PRECISAS (vsce no re-excluye bien tras un !dir/**): solo lo justo
