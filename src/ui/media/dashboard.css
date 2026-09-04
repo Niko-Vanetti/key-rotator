@@ -118,13 +118,6 @@ img, textarea, input, select { max-width: 100%; }
   font-size: 12px;
   line-height: 1.5;
 }
-.eyebrow {
-  color: var(--vscode-focusBorder);
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
 
 .add-form {
   display: grid;
@@ -136,9 +129,9 @@ img, textarea, input, select { max-width: 100%; }
   border-radius: 7px;
   background: var(--kr-surface);
 }
-.primary-form {
-  border-color: color-mix(in srgb, var(--vscode-focusBorder) 50%, var(--kr-border));
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--vscode-focusBorder) 70%, transparent);
+.primary-form { background: var(--kr-surface); }
+.primary-form:focus-within {
+  border-color: color-mix(in srgb, var(--vscode-focusBorder) 45%, var(--kr-border));
 }
 .add-form .full { grid-column: 1 / -1; }
 .add-form textarea, .add-form input {
@@ -210,34 +203,60 @@ img, textarea, input, select { max-width: 100%; }
 }
 
 .resource-list { display: flex; flex-direction: column; gap: 6px; }
-.account-card {
-  display: flex;
+
+/* Manifiesto de modelos: columnas alineadas para poder COMPARAR verticalmente
+   los veredictos de un vistazo — algo que una pila de tarjetas no permite. */
+.roster { display: flex; flex-direction: column; }
+.roster-head,
+.model-row {
+  display: grid;
+  /* la 4ª columna va FIJA: si fuera `auto`, la celda vacía del encabezado
+     colapsaría a 0 y sus etiquetas no caerían sobre las columnas. */
+  grid-template-columns: minmax(0, 1fr) 124px 80px 152px;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 58px;
-  padding: 9px 11px;
-  border: 1px solid var(--kr-border);
-  border-radius: 6px;
-  background: var(--vscode-editor-background);
+  gap: 8px 14px;
 }
-.account-card:hover { border-color: color-mix(in srgb, var(--vscode-focusBorder) 48%, var(--kr-border)); }
-.account-card .meta { display: flex; flex: 1 1 200px; flex-direction: column; gap: 4px; min-width: 0; }
-.account-card .label { overflow-wrap: anywhere; font-weight: 600; }
-.account-card .sub {
-  overflow: hidden;
+.roster-head {
+  padding: 0 8px 6px;
+  border-bottom: 1px solid var(--kr-border);
   color: var(--kr-muted);
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11px;
 }
-.account-card .actions { display: flex; flex: 0 0 auto; gap: 5px; }
-.actions button { margin: 0; }
-.actions button:disabled { cursor: default; opacity: .5; }
-.account-card .verdict.recomendado { color: var(--vscode-charts-green); }
-.account-card .verdict.usable { color: var(--vscode-charts-yellow); }
-.account-card .verdict.no-viable { color: var(--vscode-charts-red); }
+.model-row {
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--kr-border);
+}
+.model-row > * { min-width: 0; }
+.model-row:hover { background: var(--kr-hover); }
+/* El mono se reserva a UN trabajo: los identificadores que pegaste. */
+.model-row .id {
+  overflow-wrap: anywhere;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+.model-row .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.model-row .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.model-row .age { color: var(--kr-muted); font-size: 11px; white-space: nowrap; }
+.model-row .actions { display: flex; gap: 5px; }
+/* El motivo baja a su propia línea y se lee ENTERO (antes iba recortado). */
+.model-row .why {
+  grid-column: 1 / -1;
+  margin-top: -2px;
+  color: var(--kr-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+/* Semántica del editor: se leen bien en cualquier tema del usuario. */
+.state.recomendado { color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); }
+.state.usable { color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow)); }
+.state.no-viable { color: var(--vscode-editorError-foreground, var(--vscode-charts-red)); }
+.state.no-concluyente,
+.state.sin-probar { color: var(--kr-muted); }
 
 .drop-zone {
   display: flex;
@@ -316,4 +335,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* Estrecho: sin cabecera de columnas, todo apilado. El estado y la antigüedad
+   comparten línea; el resto ocupa el ancho para que nada desborde. */
+@media (max-width: 620px) {
+  .roster-head { display: none; }
+  .model-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 5px;
+  }
+  .model-row .id { grid-column: 1 / -1; }
+  .model-row .state { grid-column: 1; }
+  .model-row .age { grid-column: 2; text-align: right; }
+  .model-row .actions { grid-column: 1 / -1; }
 }

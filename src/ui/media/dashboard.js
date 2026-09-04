@@ -37,39 +37,25 @@ function renderAccounts(accounts) {
   const list = document.getElementById('accountList');
   list.innerHTML = '';
   if (accounts.length === 0) {
-    list.innerHTML = '<div class="empty">No hay cuentas configuradas todavía.</div>';
+    list.innerHTML = '<div class="empty">Pega arriba el código de un modelo para empezar.</div>';
     return;
   }
-
-  // El MODELO, su veredicto de viabilidad GUARDADO y las acciones.
-  const ICON = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔', 'no-concluyente': '❔' };
-  // Antigüedad legible del último análisis (para saber si el dato es fresco).
-  const ageOf = (at) => {
-    if (!at) return '';
-    const m = Math.floor((Date.now() - at) / 60000);
-    if (m < 1) return ' · recién probado';
-    if (m < 60) return ` · hace ${m} min`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return ` · hace ${h} h`;
-    return ` · hace ${Math.floor(h / 24)} d`;
-  };
   for (const acc of accounts) {
-    const v = acc.viability;
-    const text = v ? `${ICON[v.verdict] || ''} ${v.verdict}: ${v.summary}${ageOf(v.at)}` : 'sin probar todavía';
-    const cls = v ? 'sub verdict ' + v.verdict : 'sub verdict';
-    const card = document.createElement('div');
-    card.className = 'account-card';
-    card.innerHTML = `
-      <div class="meta">
-        <span class="label">${acc.label}</span>
-        <span class="${cls}" id="verdict-${acc.id}">${text}</span>
-      </div>
-      <div class="actions">
+    const row = document.createElement('div');
+    row.className = 'model-row';
+    row.innerHTML = `
+      <span class="id">${acc.label}</span>
+      <span class="state ${stateClass(acc.viability)}" id="state-${acc.id}">
+        <span class="dot"></span>${stateText(acc.viability)}
+      </span>
+      <span class="age" id="age-${acc.id}">${ageOf(acc.viability && acc.viability.at)}</span>
+      <span class="actions">
         <button data-action="test" data-id="${acc.id}">Probar</button>
         <button data-action="delete" data-id="${acc.id}">Eliminar</button>
-      </div>
+      </span>
+      <span class="why" id="why-${acc.id}">${acc.viability ? acc.viability.summary : 'Sin probar todavía.'}</span>
     `;
-    list.appendChild(card);
+    list.appendChild(row);
   }
 
   list.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
@@ -77,22 +63,41 @@ function renderAccounts(accounts) {
   });
   list.querySelectorAll('button[data-action="test"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const v = document.getElementById('verdict-' + btn.dataset.id);
-      if (v) v.textContent = '⏳ probando… (puede tardar hasta ~1 min)';
+      const st = document.getElementById('state-' + btn.dataset.id);
+      const why = document.getElementById('why-' + btn.dataset.id);
+      if (st) { st.className = 'state sin-probar'; st.innerHTML = '<span class="dot"></span>probando'; }
+      if (why) why.textContent = 'Midiendo velocidad, consistencia y uso de herramientas. Puede tardar hasta un minuto.';
       btn.disabled = true;
       vscode.postMessage({ type: 'testModel', id: btn.dataset.id });
     });
   });
 }
 
+const stateClass = (v) => (v ? v.verdict : 'sin-probar');
+const stateText = (v) => (v ? v.verdict : 'sin probar');
+
+// Antigüedad del último análisis: dice si el dato todavía vale.
+function ageOf(at) {
+  if (!at) return '—';
+  const m = Math.floor((Date.now() - at) / 60000);
+  if (m < 1) return 'recién';
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `hace ${h} h`;
+  return `hace ${Math.floor(h / 24)} d`;
+}
+
 // Resultado del análisis de viabilidad de un modelo (llega del host).
 function showVerdict(msg) {
-  const v = document.getElementById('verdict-' + msg.id);
-  if (v) {
-    const icons = { recomendado: '✅', usable: '⚠️', 'no-viable': '⛔', 'no-concluyente': '❔' };
-    v.textContent = `${icons[msg.verdict] || ''} ${msg.verdict}: ${msg.summary}`;
-    v.className = 'sub verdict ' + msg.verdict;
+  const st = document.getElementById('state-' + msg.id);
+  if (st) {
+    st.className = 'state ' + msg.verdict;
+    st.innerHTML = '<span class="dot"></span>' + msg.verdict;
   }
+  const why = document.getElementById('why-' + msg.id);
+  if (why) why.textContent = msg.summary;
+  const age = document.getElementById('age-' + msg.id);
+  if (age) age.textContent = 'recién';
   const btn = document.querySelector('button[data-action="test"][data-id="' + msg.id + '"]');
   if (btn) btn.disabled = false;
 }

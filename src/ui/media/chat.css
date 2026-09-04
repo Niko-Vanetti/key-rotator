@@ -346,7 +346,7 @@ button, select { color: inherit; }
   padding: 5px 9px 7px;
   border-top: 1px solid color-mix(in srgb, var(--kr-border) 65%, transparent);
 }
-.ctl { display: flex; align-items: center; gap: 4px; color: var(--kr-muted); font-size: 10px; }
+.ctl { display: flex; align-items: center; gap: 5px; color: var(--kr-muted); font-size: 11px; }
 .ctl select {
   max-width: 190px;
   padding: 1px 3px;
@@ -355,13 +355,13 @@ button, select { color: inherit; }
   background: transparent;
   color: var(--vscode-foreground);
   font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 10px;
+  font-size: 12px;
 }
 .ctl select:hover { background: var(--kr-hover); }
 .spacer { flex: 1 1 auto; }
-.toggle-btn, .toggle-chip { padding: 2px 6px; cursor: pointer; }
-.toggle-btn:hover, .toggle-chip:hover { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
-.toggle-btn.on, .toggle-chip.on {
+.toggle-btn { padding: 2px 6px; cursor: pointer; }
+.toggle-btn:hover { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
+.toggle-btn.on {
   border-color: color-mix(in srgb, var(--vscode-focusBorder) 65%, var(--kr-border));
   background: color-mix(in srgb, var(--vscode-focusBorder) 12%, transparent);
   color: var(--vscode-foreground);
@@ -522,7 +522,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible {
 .msg.user { max-width: 90%; }
 .command-dock { padding: 0 7px 7px; }
 .bottom-bar { align-items: flex-start; }
-.ctl select { max-width: 135px; }
+.ctl select { max-width: 150px; }
 .viewer-toolbar { flex-wrap: wrap; }
 .viewer-toolbar strong { max-width: calc(100vw - 64px); }
 #viewerMeta { display: none; }

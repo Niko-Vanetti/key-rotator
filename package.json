@@ -2,7 +2,7 @@
   "name": "key-rotator",
   "displayName": "KeyRotator",
   "description": "Convierte tus API keys de NVIDIA Build / OpenRouter en un agente de IA dentro de VS Code: archivos, comandos, web, imágenes, documentos y voz — con tu aprobación en cada paso.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "niko-local",
   "license": "MIT",
   "icon": "images/icon.png",

@@ -3,6 +3,36 @@
 Todas las versiones de KeyRotator y qué cambió en cada una. Las fechas son la
 del release. El formato sigue [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.4.1] — 2026-09-04
+
+Pase visual, con el mismo criterio: que la forma diga algo, no que decore.
+
+### Cambiado
+
+- **La lista de modelos deja de ser tarjetas y pasa a ser un manifiesto de
+  columnas alineadas.** Antes el veredicto, su motivo y la antigüedad iban
+  apretados en una sola línea con `text-overflow: ellipsis` — el motivo casi
+  siempre salía cortado y no se podían comparar dos modelos. Ahora los estados
+  forman una columna que se escanea en vertical y el motivo se lee entero.
+- **Los veredictos usan los colores semánticos del editor**
+  (`testing-iconPassed`, `editorWarning-foreground`, `editorError-foreground`),
+  así se leen bien en cualquier tema, no solo en el oscuro.
+- **La tipografía monoespaciada queda reservada a los identificadores de
+  modelo**, que es lo que de verdad es código. Antes decoraba etiquetas.
+- Con el selector de modelo ya solo en la barra del chat, sube de 10 a 12 px:
+  es el único control que queda y hay sitio para que se lea.
+
+### Eliminado
+
+- **Los 5 `eyebrow`** (etiquetas diminutas en mayúsculas sobre cada encabezado):
+  repetían literalmente el título que tenían debajo — "Proveedores" sobre
+  "Modelos conectados".
+- **Pestaña "Estadísticas"**, fusionada en **"Actividad"**: las estadísticas se
+  calculan a partir del historial de rotación, así que eran la misma pantalla
+  partida en dos. 5 pestañas → 4.
+- El borde de acento del formulario de pegado, que pesaba más que la lista de
+  modelos siendo esta lo importante de la pantalla.
+
 ## [0.4.0] — 2026-09-02
 
 Limpieza a fondo de la interfaz: **una sola forma de hacer cada cosa**.

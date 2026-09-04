@@ -23,14 +23,13 @@
       <button class="tab active" data-tab="keys" role="tab" aria-selected="true">Modelos</button>
       <button class="tab" data-tab="mcp" role="tab" aria-selected="false">MCP</button>
       <button class="tab" data-tab="skills" role="tab" aria-selected="false">Skills</button>
-      <button class="tab" data-tab="history" role="tab" aria-selected="false">Historial</button>
-      <button class="tab" data-tab="stats" role="tab" aria-selected="false">Estadísticas</button>
+      <button class="tab" data-tab="history" role="tab" aria-selected="false">Actividad</button>
     </nav>
 
     <main class="workspace-content">
       <section id="keys" class="panel active">
         <div class="panel-heading">
-          <div><span class="eyebrow">Proveedores</span><h2>Modelos conectados</h2></div>
+          <div><h2>Modelos conectados</h2></div>
           <p>Pega una clave o un ejemplo de código. KeyRotator detecta el proveedor y la configuración.</p>
         </div>
 
@@ -44,17 +43,19 @@
 
         <div class="section-head director-row">
           <div>
-            <span class="eyebrow">Modo agencia</span>
             <p class="hint"><b>Director</b> · investiga, asigna el trabajo e integra la respuesta.</p>
           </div>
           <select id="directorSelect" aria-label="Director de la agencia"></select>
         </div>
-        <div id="accountList" class="resource-list"></div>
+        <div class="roster-head" aria-hidden="true">
+          <span>Modelo</span><span>Estado</span><span>Probado</span><span></span>
+        </div>
+        <div id="accountList" class="roster"></div>
       </section>
 
       <section id="mcp" class="panel">
         <div class="panel-heading">
-          <div><span class="eyebrow">Herramientas</span><h2>Servidores MCP</h2></div>
+          <div><h2>Servidores MCP</h2></div>
           <p>Conecta capacidades externas. Cada llamada requiere tu aprobación.</p>
         </div>
         <div class="section-head">
@@ -71,7 +72,7 @@
 
       <section id="skills" class="panel">
         <div class="panel-heading">
-          <div><span class="eyebrow">Biblioteca</span><h2>Skills del agente</h2></div>
+          <div><h2>Skills del agente</h2></div>
           <p>Instrucciones reutilizables que el agente puede cargar durante una tarea.</p>
         </div>
         <div class="section-head">
@@ -95,22 +96,8 @@
 
       <section id="history" class="panel">
         <div class="panel-heading">
-          <div><span class="eyebrow">Actividad</span><h2>Historial de rotación</h2></div>
-          <p>Cambios de cuenta realizados para mantener las conversaciones disponibles.</p>
-        </div>
-        <div class="table-wrap">
-          <table id="historyTable">
-            <thead><tr><th>Fecha</th><th>De</th><th>A</th><th>Proveedor</th><th>Razón</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div class="empty" id="historyEmpty">Aún no hay rotaciones.</div>
-      </section>
-
-      <section id="stats" class="panel">
-        <div class="panel-heading">
-          <div><span class="eyebrow">Rendimiento</span><h2>Estadísticas</h2></div>
-          <p>Una vista rápida de la estabilidad de tus proveedores.</p>
+          <div><h2>Actividad</h2></div>
+          <p>Cambios de modelo hechos para que una conversación no se quede sin respuesta.</p>
         </div>
         <div class="stats-grid">
           <div class="stat-block">
@@ -118,11 +105,19 @@
             <div id="statsByProvider"></div>
           </div>
           <div class="stat-block">
-            <h3>Cuenta más estable</h3>
+            <h3>Modelo más estable</h3>
             <div id="mostStable"></div>
           </div>
         </div>
+        <div class="table-wrap">
+          <table id="historyTable">
+            <thead><tr><th>Fecha</th><th>De</th><th>A</th><th>Proveedor</th><th>Razón</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="empty" id="historyEmpty">Todavía no ha hecho falta rotar.</div>
       </section>
+
     </main>
   </div>
 
